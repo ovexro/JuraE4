@@ -201,6 +201,14 @@ Settings are stored in `~/.config/jura-desktop/settings.json`:
 - **E4 only**: Tested exclusively on the JURA E4. Other JURA models may work if they use the same WiFi Connect V2 dongle, but product codes and register layouts will differ.
 - **No BLE brewing**: The BLE Smart Connect dongle works for status reading but rejects brew commands from Linux (BlueZ ATT limitation). WiFi V2 is the only working brew path.
 
+## Disclaimer
+
+This project is an independent, personal work created for educational and interoperability purposes. It is **not affiliated with, endorsed by, or associated with JURA Elektroapparate AG** or any of its subsidiaries. "JURA", "J.O.E.", and "WiFi Connect" are trademarks of JURA Elektroapparate AG.
+
+The communication protocol was reverse-engineered under the right to interoperability as provided by EU Directive 2009/24/EC (Article 6) and applicable fair-use principles, for the sole purpose of enabling a Linux desktop client to communicate with hardware owned by the user.
+
+No proprietary source code, binaries, or assets from JURA are included in this repository.
+
 ## License
 
 Private — not for redistribution.
