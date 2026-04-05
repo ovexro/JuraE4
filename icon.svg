@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#1e1e35"/>
+      <stop offset="100%" stop-color="#0b0b13"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e0c890"/>
+      <stop offset="50%" stop-color="#c8a662"/>
+      <stop offset="100%" stop-color="#a08040"/>
+    </linearGradient>
+    <linearGradient id="goldFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c8a662" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#c8a662" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="steam" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#c8a662" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#c8a662" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="52%" r="30%">
+      <stop offset="0%" stop-color="#c8a662" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#c8a662" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="128" fill="#0b0b13"/>
+  <circle cx="128" cy="128" r="125" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="124" fill="none" stroke="#c8a662" stroke-opacity="0.2" stroke-width="2"/>
+
+  <!-- Ambient glow behind cup -->
+  <ellipse cx="122" cy="142" rx="60" ry="50" fill="url(#glow)"/>
+
+  <!-- Saucer -->
+  <ellipse cx="118" cy="184" rx="56" ry="11" fill="none" stroke="url(#gold)" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- Cup body — larger and bolder -->
+  <path d="M 78 114 L 82 170 Q 82 182 100 182 L 138 182 Q 156 182 156 170 L 160 114 Z"
+        fill="url(#goldFill)" stroke="url(#gold)" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- Coffee surface line -->
+  <path d="M 86 132 Q 119 137 153 132" fill="none" stroke="#c8a662" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Cup handle — larger -->
+  <path d="M 160 126 Q 185 126 185 148 Q 185 170 160 170"
+        fill="none" stroke="url(#gold)" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- Steam wisp 1 (left) -->
+  <path d="M 100 106 Q 95 92 100 80 Q 105 68 100 56" fill="none" stroke="url(#steam)" stroke-width="2.5" stroke-linecap="round">
+    <animate attributeName="d"
+             values="M 100 106 Q 95 92 100 80 Q 105 68 100 56;
+                     M 100 106 Q 105 92 100 80 Q 95 68 100 56;
+                     M 100 106 Q 95 92 100 80 Q 105 68 100 56"
+             dur="3s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- Steam wisp 2 (center) — tallest -->
+  <path d="M 119 106 Q 114 90 119 76 Q 124 62 119 48" fill="none" stroke="url(#steam)" stroke-width="2.8" stroke-linecap="round">
+    <animate attributeName="d"
+             values="M 119 106 Q 114 90 119 76 Q 124 62 119 48;
+                     M 119 106 Q 124 90 119 76 Q 114 62 119 48;
+                     M 119 106 Q 114 90 119 76 Q 124 62 119 48"
+             dur="3.5s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- Steam wisp 3 (right) -->
+  <path d="M 138 106 Q 133 94 138 82 Q 143 70 138 60" fill="none" stroke="url(#steam)" stroke-width="2.2" stroke-linecap="round">
+    <animate attributeName="d"
+             values="M 138 106 Q 133 94 138 82 Q 143 70 138 60;
+                     M 138 106 Q 143 94 138 82 Q 133 70 138 60;
+                     M 138 106 Q 133 94 138 82 Q 143 70 138 60"
+             dur="2.8s" repeatCount="indefinite"/>
+  </path>
+</svg>

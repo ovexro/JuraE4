@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Firmware binaries
+*.bin
+
+# APK artifacts (large, not source)
+joe-apk/
+joe-decompiled/
+
+# Captures (one-time analysis, contain session data)
+captures/*.pcap
+
+# OS
+.DS_Store
+*~
