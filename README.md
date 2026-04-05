@@ -65,12 +65,70 @@ pip install -r requirements.txt
 ./run.sh
 ```
 
+## First-time setup (auth hash)
+
+The WiFi Connect V2 dongle requires a per-dongle authentication hash. This is a one-time setup — you extract the hash once and the app remembers it forever.
+
+### Step 1: Capture network traffic
+
+You need a packet capture of the J.O.E. app connecting to your machine. Pick whichever method works for your setup:
+
+**Option A — Wireshark (easiest if your PC is on the same WiFi)**
+1. Install [Wireshark](https://www.wireshark.org/)
+2. Start capturing on your WiFi interface
+3. Open J.O.E. on your phone and let it connect to the coffee machine
+4. Stop the capture, save as `capture.pcap`
+
+**Option B — tcpdump on an OpenWrt router**
+```bash
+# SSH into your router
+ssh root@192.168.1.1
+
+# Capture traffic to/from the dongle (replace IP if different)
+tcpdump -i br-lan -w /tmp/capture.pcap host 192.168.1.105 &
+
+# Open J.O.E. on your phone, let it connect, then:
+kill %1
+scp root@192.168.1.1:/tmp/capture.pcap .
+```
+
+**Option C — tcpdump on Linux (if your network allows promiscuous mode)**
+```bash
+sudo tcpdump -i wlan0 -w capture.pcap port 51515
+# Open J.O.E. on phone, let it connect, then Ctrl+C
+```
+
+### Step 2: Extract the hash
+
+```bash
+pip install scapy  # one-time dependency
+python3 tools/extract_hash.py capture.pcap
+```
+
+Output:
+```
+============================================================
+  AUTH HASH FOUND
+============================================================
+
+  Device name:  Your Phone
+  Auth hash:    CCC3B0FDD2EE35B9...
+
+  Paste this hash into the JURA Desktop Control app
+  when prompted on first launch.
+============================================================
+```
+
+### Step 3: Paste into the app
+
+On first launch, the app shows a setup screen. Paste the 64-character hash and click **SAVE & CONNECT**. Done — you'll never be asked again.
+
 ## Usage
 
-### First launch
-1. The app will try to auto-discover the WiFi Connect V2 dongle on your network
-2. If discovery fails, enter the dongle's IP address manually (check your router's DHCP leases)
-3. Once connected, the IP is saved — next launch connects instantly
+### Daily use
+1. Launch the app — it auto-connects to the dongle (saved IP from last session)
+2. If discovery fails, enter the dongle's IP manually (check your router's DHCP leases)
+3. Once connected, the IP is saved for next time
 
 ### Making coffee
 1. Choose a product card (Espresso, Coffee, or Hot Water)

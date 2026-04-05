@@ -939,6 +939,136 @@ class BrewConfirmDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# First-Launch Setup Screen
+# ---------------------------------------------------------------------------
+
+class SetupScreen(QWidget):
+    """One-time setup: user pastes their auth hash (extracted from PCAP)."""
+    hash_submitted = pyqtSignal(str)  # the 64-char hex hash
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(2)
+
+        center = QVBoxLayout()
+        center.setSpacing(0)
+        center.setAlignment(Qt.AlignHCenter)
+
+        brand = QLabel("JURA")
+        brand.setFont(make_font(36, QFont.Light, spacing=14))
+        brand.setStyleSheet(f"color: {GOLD}; background: transparent;")
+        brand.setAlignment(Qt.AlignCenter)
+        center.addWidget(brand)
+        center.addSpacing(6)
+
+        sub = QLabel("DESKTOP CONTROL")
+        sub.setFont(make_font(11, QFont.Normal, spacing=4))
+        sub.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        sub.setAlignment(Qt.AlignCenter)
+        center.addWidget(sub)
+        center.addSpacing(8)
+
+        line = QFrame()
+        line.setFixedSize(60, 2)
+        line.setStyleSheet(f"background-color: {GOLD_DIMMED};")
+        center.addWidget(line, alignment=Qt.AlignCenter)
+        center.addSpacing(32)
+
+        title = QLabel("First-time setup")
+        title.setFont(make_font(16, QFont.DemiBold))
+        title.setStyleSheet(f"color: {TEXT}; background: transparent;")
+        title.setAlignment(Qt.AlignCenter)
+        center.addWidget(title)
+        center.addSpacing(12)
+
+        desc = QLabel(
+            "Paste your WiFi Connect V2 authentication hash below.\n"
+            "To get it, capture network traffic while J.O.E. connects,\n"
+            "then run:  python3 tools/extract_hash.py capture.pcap"
+        )
+        desc.setFont(make_font(11))
+        desc.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        desc.setAlignment(Qt.AlignCenter)
+        desc.setWordWrap(True)
+        desc.setFixedWidth(440)
+        center.addWidget(desc, alignment=Qt.AlignCenter)
+        center.addSpacing(24)
+
+        # Hash input
+        input_frame = QFrame()
+        input_frame.setFixedWidth(480)
+        input_frame.setStyleSheet("background: transparent; border: none;")
+        inp_lay = QVBoxLayout(input_frame)
+        inp_lay.setContentsMargins(0, 0, 0, 0)
+        inp_lay.setSpacing(12)
+
+        self._hash_input = QLineEdit()
+        self._hash_input.setPlaceholderText("64-character hex hash (e.g. CCC3B0FDD2EE...)")
+        self._hash_input.setFixedHeight(44)
+        self._hash_input.setFont(make_font(11))
+        self._hash_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {BG_ELEVATED};
+                color: {GOLD_LIGHT};
+                border: 1px solid {BORDER};
+                border-radius: 10px;
+                padding: 0 14px;
+                font-family: monospace;
+            }}
+            QLineEdit:focus {{ border-color: {GOLD_DIMMED}; }}
+        """)
+        inp_lay.addWidget(self._hash_input)
+
+        save_btn = QPushButton("SAVE & CONNECT")
+        save_btn.setFixedHeight(46)
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setFont(make_font(12, QFont.Bold, spacing=2))
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {GOLD};
+                color: {TEXT_DARK};
+                border: none;
+                border-radius: 12px;
+            }}
+            QPushButton:hover {{ background-color: {GOLD_LIGHT}; }}
+        """)
+        save_btn.clicked.connect(self._on_submit)
+        inp_lay.addWidget(save_btn)
+
+        center.addWidget(input_frame, alignment=Qt.AlignCenter)
+        center.addSpacing(16)
+
+        self._error_label = QLabel("")
+        self._error_label.setFont(make_font(11))
+        self._error_label.setStyleSheet(f"color: {RED}; background: transparent;")
+        self._error_label.setAlignment(Qt.AlignCenter)
+        self._error_label.setFixedWidth(440)
+        center.addWidget(self._error_label, alignment=Qt.AlignCenter)
+
+        outer.addLayout(center)
+        outer.addStretch(3)
+
+    def _on_submit(self):
+        raw = self._hash_input.text().strip()
+        # Accept with or without spaces/colons
+        cleaned = raw.replace(" ", "").replace(":", "").replace("-", "")
+        if len(cleaned) != 64:
+            self._error_label.setText(
+                f"Hash must be exactly 64 hex characters (got {len(cleaned)})"
+            )
+            return
+        try:
+            bytes.fromhex(cleaned)
+        except ValueError:
+            self._error_label.setText("Invalid hex characters in hash")
+            return
+        self._error_label.setText("")
+        self.hash_submitted.emit(cleaned.upper())
+
+
+# ---------------------------------------------------------------------------
 # Connection Screen
 # ---------------------------------------------------------------------------
 
@@ -1757,18 +1887,28 @@ class JuraApp(QMainWindow):
         self._user_disconnect = False
         self._reconnecting = False
         self._reconnect_attempts = 0
-        self._tried_scan = False  # True after fallback scan attempted
+        self._tried_scan = False
+
+        # Apply saved auth hash (overrides the module default)
+        saved_hash = self._settings.get("auth_hash")
+        if saved_hash:
+            self._wifi._auth_hash = saved_hash
 
         # Stacked views
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
+        self._setup_screen = SetupScreen()
         self._conn_screen = ConnectionScreen()
         self._dashboard = DashboardScreen(self._settings)
         self._stats_screen = StatisticsScreen()
-        self._stack.addWidget(self._conn_screen)   # index 0
-        self._stack.addWidget(self._dashboard)      # index 1
-        self._stack.addWidget(self._stats_screen)   # index 2
+        self._stack.addWidget(self._setup_screen)   # index 0
+        self._stack.addWidget(self._conn_screen)    # index 1
+        self._stack.addWidget(self._dashboard)      # index 2
+        self._stack.addWidget(self._stats_screen)   # index 3
+
+        # Wire up setup screen
+        self._setup_screen.hash_submitted.connect(self._on_hash_submitted)
 
         # Wire up connection screen
         self._conn_screen.manual_connect.connect(self._on_manual_connect)
@@ -1814,8 +1954,12 @@ class JuraApp(QMainWindow):
         self._quitting = False
         self._setup_tray()
 
-        # Auto-connect on launch (short delay for window to render)
-        QTimer.singleShot(300, self._auto_connect)
+        # Launch: setup screen if no hash, otherwise auto-connect
+        if self._wifi._auth_hash:
+            self._stack.setCurrentWidget(self._conn_screen)
+            QTimer.singleShot(300, self._auto_connect)
+        else:
+            self._stack.setCurrentWidget(self._setup_screen)
 
     # ======================================================================
     # System tray
@@ -1933,6 +2077,17 @@ class JuraApp(QMainWindow):
     def _tray_quit(self):
         self._quitting = True
         self.close()
+
+    # ======================================================================
+    # Setup
+    # ======================================================================
+
+    def _on_hash_submitted(self, auth_hash):
+        self._settings.set("auth_hash", auth_hash)
+        self._settings.save()
+        self._wifi._auth_hash = auth_hash
+        self._stack.setCurrentWidget(self._conn_screen)
+        QTimer.singleShot(300, self._auto_connect)
 
     # ======================================================================
     # Auto-connect flow

@@ -197,6 +197,7 @@ class WiFiV2Manager(QObject):
         super().__init__()
         self._lock = threading.Lock()
         self._sock_lock = threading.Lock()  # guards socket send/recv pairs
+        self._auth_hash = AUTH_HASH
         self._connected = False
         self._brewing = False
         self._last_brew_time = 0.0
@@ -422,7 +423,7 @@ class WiFiV2Manager(QObject):
 
             # Authenticate
             name_hex = DEVICE_NAME.encode("ascii").hex().upper()
-            hp_cmd = f"@HP:,{name_hex},{AUTH_HASH}"
+            hp_cmd = f"@HP:,{name_hex},{self._auth_hash}"
             if not self._send(hp_cmd):
                 self._close_socket()
                 self.connect_fail.emit("Failed to send authentication")
