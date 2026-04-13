@@ -34,8 +34,8 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] Brew confirmation dialog
 - [x] Alert status bar with @TF bitmask alerts + maintenance warnings at <15%
 - [x] Reconnecting state (amber LED, 5 attempts x 5s)
-- [ ] Brew animation — tracks full brew cycle (heating -> grinding -> pouring -> done)
-- [ ] Brew animation timing matches real machine phases
+- [x] Brew animation — tracks full brew cycle (preparing -> heating -> pouring -> done)
+- [x] Brew animation timing matches real machine phases (waits for live data before filling cup)
 
 ## GUI — Statistics & Maintenance
 - [x] 3 StatCounterCard widgets + total beverages
