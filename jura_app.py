@@ -387,6 +387,7 @@ class BrewingAnimationWidget(QWidget):
         self._elapsed = 0
         self._duration_ms = volume_ml * 250
         self._live_mode = False  # True when driven by real machine data
+        self._waiting = True  # True until first live data or fallback timeout
         self._temperature = 0  # live temperature from machine (Celsius)
         self._show_enjoy = False  # True after 100% — shows completion message
         self._steam_particles = []
@@ -394,6 +395,16 @@ class BrewingAnimationWidget(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
+        # Fallback: exit waiting mode after 15s if no live data arrives
+        self._waiting_timeout = QTimer(self)
+        self._waiting_timeout.setSingleShot(True)
+        self._waiting_timeout.timeout.connect(self._exit_waiting)
+
+    def _exit_waiting(self):
+        """Fallback: start non-live time-based animation if no live data arrived."""
+        if self._active and self._waiting:
+            self._waiting = False
+            self._elapsed = 0  # Reset so non-live animation starts from 0%
 
     def start(self, volume_ml=None):
         if volume_ml is not None:
@@ -405,15 +416,19 @@ class BrewingAnimationWidget(QWidget):
         self._elapsed = 0
         self._active = True
         self._live_mode = False
+        self._waiting = True
         self._temperature = 0
         self._show_enjoy = False
         self._init_steam()
         self._timer.start()
+        self._waiting_timeout.start(15000)
         self.update()
 
     def set_live_progress(self, percent: int, temperature: int = 0):
         """Set progress from real machine data (0-100%). Switches to live mode."""
         self._live_mode = True
+        self._waiting = False
+        self._waiting_timeout.stop()
         self._target_progress = min(percent, 100) / 100.0
         self._temperature = temperature
         if percent >= 100 and self._active and not self._show_enjoy:
@@ -425,6 +440,7 @@ class BrewingAnimationWidget(QWidget):
             return
         self._active = False
         self._timer.stop()
+        self._waiting_timeout.stop()
         self.finished.emit()
 
     def _tick(self):
@@ -436,11 +452,13 @@ class BrewingAnimationWidget(QWidget):
             self._progress += diff * 0.12
             if abs(diff) < 0.002:
                 self._progress = self._target_progress
-        else:
+        elif not self._waiting:
+            # Non-live fallback (only after waiting timeout expires)
             self._progress = min(1.0, self._elapsed / self._duration_ms)
+        # else: waiting mode — progress stays at 0 until live data arrives
         self._update_steam()
         self.update()
-        if not self._live_mode and self._progress >= 1.0 and not self._show_enjoy:
+        if not self._live_mode and not self._waiting and self._progress >= 1.0 and not self._show_enjoy:
             self._show_enjoy = True
             QTimer.singleShot(2500, self.stop)
 
@@ -610,37 +628,49 @@ class BrewingAnimationWidget(QWidget):
         p.drawText(QRectF(ring_cx - 20, ring_cy - ring_r - 18, 40, 16),
                    Qt.AlignCenter, f"{int(self._progress * 100)}%")
 
-        # Bottom text — three states: enjoy / heating / normal
+        # Text baseline — always below both saucer and ring bottom
+        text_base = max(sy, ring_cy + ring_r) + 4
+
+        # Bottom text — four states: enjoy / waiting / heating / normal
         if self._show_enjoy:
             # Completion: "Enjoy your coffee!"
             p.setPen(QColor(GOLD))
             p.setFont(make_font(14, QFont.DemiBold, spacing=1))
-            p.drawText(QRectF(0, sy + 10, w, 30), Qt.AlignCenter,
+            p.drawText(QRectF(0, text_base + 6, w, 30), Qt.AlignCenter,
                        "Enjoy your coffee!")
+        elif self._waiting and self._progress < 0.01:
+            # Waiting for machine — pulsing "Preparing..."
+            pulse = 0.5 + 0.5 * math.sin(self._frame * 0.06)
+            wait_color = QColor(GOLD_LIGHT)
+            wait_color.setAlpha(int(120 + 100 * pulse))
+            p.setPen(wait_color)
+            p.setFont(make_font(13, QFont.DemiBold))
+            p.drawText(QRectF(0, text_base + 6, w, 24), Qt.AlignCenter,
+                       "Preparing\u2026")
         elif self._live_mode and self._progress < 0.02 and self._temperature > 0:
-            # Heating phase — prominent pulsing display
+            # Heating/grinding phase — prominent pulsing display
             pulse = 0.5 + 0.5 * math.sin(self._frame * 0.08)
             heat_color = QColor(AMBER)
             heat_color.setAlpha(int(160 + 80 * pulse))
             p.setPen(heat_color)
             p.setFont(make_font(13, QFont.DemiBold))
-            p.drawText(QRectF(0, sy + 8, w, 24), Qt.AlignCenter,
+            p.drawText(QRectF(0, text_base + 4, w, 24), Qt.AlignCenter,
                        "Heating up\u2026")
             p.setPen(QColor(AMBER))
             p.setFont(make_font(11))
-            p.drawText(QRectF(0, sy + 32, w, 22), Qt.AlignCenter,
+            p.drawText(QRectF(0, text_base + 26, w, 22), Qt.AlignCenter,
                        f"{self._temperature}\u00b0C")
         else:
             # Normal brewing — volume + temperature
             dispensed = int(self._volume_ml * self._progress)
             p.setPen(QColor(GOLD_LIGHT))
             p.setFont(make_font(11, QFont.DemiBold))
-            p.drawText(QRectF(0, sy + 14, w, 24), Qt.AlignCenter,
+            p.drawText(QRectF(0, text_base + 6, w, 24), Qt.AlignCenter,
                        f"{dispensed} / {self._volume_ml} ml")
             if self._live_mode and self._temperature > 0:
                 p.setPen(QColor(AMBER if self._temperature < 60 else GREEN))
                 p.setFont(make_font(9))
-                p.drawText(QRectF(0, sy + 36, w, 18), Qt.AlignCenter,
+                p.drawText(QRectF(0, text_base + 28, w, 18), Qt.AlignCenter,
                            f"{self._temperature}\u00b0C")
         p.end()
 
@@ -676,11 +706,12 @@ class ProductCard(QFrame):
         card_layout = QVBoxLayout(self)
         card_layout.setContentsMargins(0, 0, 0, 0)
         self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background: transparent; border: none;")
         card_layout.addWidget(self._stack)
 
         # Page 0: Controls
         controls = QWidget()
-        controls.setStyleSheet("background: transparent;")
+        controls.setStyleSheet("background: transparent; border: none;")
         layout = QVBoxLayout(controls)
         layout.setContentsMargins(24, 28, 24, 24)
         layout.setSpacing(0)
@@ -689,7 +720,7 @@ class ProductCard(QFrame):
         self._brew_anim = BrewingAnimationWidget(product.volume_default, product.icon_style)
         self._brew_anim.finished.connect(self._on_anim_done)
         anim_page = QWidget()
-        anim_page.setStyleSheet("background: transparent;")
+        anim_page.setStyleSheet("background: transparent; border: none;")
         anim_layout = QVBoxLayout(anim_page)
         anim_layout.setContentsMargins(10, 10, 10, 10)
         anim_layout.addWidget(self._brew_anim, alignment=Qt.AlignCenter)
@@ -958,14 +989,14 @@ class SetupScreen(QWidget):
 
         brand = QLabel("JURA")
         brand.setFont(make_font(36, QFont.Light, spacing=14))
-        brand.setStyleSheet(f"color: {GOLD}; background: transparent;")
+        brand.setStyleSheet(f"color: {GOLD}; border: none;")
         brand.setAlignment(Qt.AlignCenter)
         center.addWidget(brand)
         center.addSpacing(6)
 
         sub = QLabel("DESKTOP CONTROL")
         sub.setFont(make_font(11, QFont.Normal, spacing=4))
-        sub.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        sub.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         sub.setAlignment(Qt.AlignCenter)
         center.addWidget(sub)
         center.addSpacing(8)
@@ -978,7 +1009,7 @@ class SetupScreen(QWidget):
 
         title = QLabel("First-time setup")
         title.setFont(make_font(16, QFont.DemiBold))
-        title.setStyleSheet(f"color: {TEXT}; background: transparent;")
+        title.setStyleSheet(f"color: {TEXT}; border: none;")
         title.setAlignment(Qt.AlignCenter)
         center.addWidget(title)
         center.addSpacing(12)
@@ -989,7 +1020,7 @@ class SetupScreen(QWidget):
             "then run:  python3 tools/extract_hash.py capture.pcap"
         )
         desc.setFont(make_font(11))
-        desc.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        desc.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         desc.setAlignment(Qt.AlignCenter)
         desc.setWordWrap(True)
         desc.setFixedWidth(440)
@@ -1042,7 +1073,7 @@ class SetupScreen(QWidget):
 
         self._error_label = QLabel("")
         self._error_label.setFont(make_font(11))
-        self._error_label.setStyleSheet(f"color: {RED}; background: transparent;")
+        self._error_label.setStyleSheet(f"color: {RED}; border: none;")
         self._error_label.setAlignment(Qt.AlignCenter)
         self._error_label.setFixedWidth(440)
         center.addWidget(self._error_label, alignment=Qt.AlignCenter)
@@ -1090,14 +1121,14 @@ class ConnectionScreen(QWidget):
         # Logo
         brand = QLabel("JURA")
         brand.setFont(make_font(36, QFont.Light, spacing=14))
-        brand.setStyleSheet(f"color: {GOLD}; background: transparent;")
+        brand.setStyleSheet(f"color: {GOLD}; border: none;")
         brand.setAlignment(Qt.AlignCenter)
         center.addWidget(brand)
         center.addSpacing(6)
 
         sub = QLabel("DESKTOP CONTROL")
         sub.setFont(make_font(11, QFont.Normal, spacing=4))
-        sub.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        sub.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         sub.setAlignment(Qt.AlignCenter)
         center.addWidget(sub)
         center.addSpacing(8)
@@ -1111,32 +1142,23 @@ class ConnectionScreen(QWidget):
         # Status message (shown during auto-connect)
         self._status = QLabel("")
         self._status.setFont(make_font(12))
-        self._status.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._status.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         self._status.setAlignment(Qt.AlignCenter)
         self._status.setWordWrap(True)
-        self._status.setFixedWidth(420)
+        self._status.setFixedWidth(500)
+        self._status.setMinimumHeight(80)
         center.addWidget(self._status, alignment=Qt.AlignCenter)
         center.addSpacing(28)
 
-        # Fallback UI (hidden until auto-connect fails)
-        self._fallback = QWidget()
-        self._fallback.setStyleSheet("background: transparent;")
-        fb_lay = QVBoxLayout(self._fallback)
-        fb_lay.setContentsMargins(0, 0, 0, 0)
-        fb_lay.setSpacing(12)
-        fb_lay.setAlignment(Qt.AlignHCenter)
-
-        # Manual IP entry
-        ip_frame = QFrame()
-        ip_frame.setFixedWidth(340)
-        ip_frame.setStyleSheet("background: transparent; border: none;")
-        ip_lay = QHBoxLayout(ip_frame)
-        ip_lay.setContentsMargins(0, 0, 0, 0)
-        ip_lay.setSpacing(8)
+        # Fallback UI — individual widgets (no container to avoid Fusion phantom borders)
+        ip_row = QHBoxLayout()
+        ip_row.setContentsMargins(0, 0, 0, 0)
+        ip_row.setSpacing(8)
+        ip_row.setAlignment(Qt.AlignCenter)
 
         self._ip_input = QLineEdit()
         self._ip_input.setPlaceholderText(f"Dongle IP  (e.g. {DEFAULT_DONGLE_IP})")
-        self._ip_input.setFixedHeight(42)
+        self._ip_input.setFixedSize(230, 42)
         self._ip_input.setFont(make_font(12))
         self._ip_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1148,13 +1170,13 @@ class ConnectionScreen(QWidget):
             }}
             QLineEdit:focus {{ border-color: {GOLD_DIMMED}; }}
         """)
-        ip_lay.addWidget(self._ip_input, stretch=1)
+        ip_row.addWidget(self._ip_input)
 
-        connect_btn = QPushButton("CONNECT")
-        connect_btn.setFixedSize(100, 42)
-        connect_btn.setCursor(Qt.PointingHandCursor)
-        connect_btn.setFont(make_font(11, QFont.Bold, spacing=1))
-        connect_btn.setStyleSheet(f"""
+        self._connect_btn = QPushButton("CONNECT")
+        self._connect_btn.setFixedSize(100, 42)
+        self._connect_btn.setCursor(Qt.PointingHandCursor)
+        self._connect_btn.setFont(make_font(11, QFont.Bold, spacing=1))
+        self._connect_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {GOLD};
                 color: {TEXT_DARK};
@@ -1163,12 +1185,12 @@ class ConnectionScreen(QWidget):
             }}
             QPushButton:hover {{ background-color: {GOLD_LIGHT}; }}
         """)
-        connect_btn.clicked.connect(self._on_manual_connect)
-        ip_lay.addWidget(connect_btn)
+        self._connect_btn.clicked.connect(self._on_manual_connect)
+        ip_row.addWidget(self._connect_btn)
 
-        fb_lay.addWidget(ip_frame, alignment=Qt.AlignCenter)
+        center.addLayout(ip_row)
+        center.addSpacing(22)
 
-        # Retry discovery button
         self._retry_btn = QPushButton("RETRY DISCOVERY")
         self._retry_btn.setFixedSize(200, 38)
         self._retry_btn.setCursor(Qt.PointingHandCursor)
@@ -1186,10 +1208,12 @@ class ConnectionScreen(QWidget):
             }}
         """)
         self._retry_btn.clicked.connect(self.retry_requested.emit)
-        fb_lay.addWidget(self._retry_btn, alignment=Qt.AlignCenter)
+        center.addWidget(self._retry_btn, alignment=Qt.AlignCenter)
 
-        center.addWidget(self._fallback, alignment=Qt.AlignCenter)
-        self._fallback.hide()
+        # Initially hidden
+        self._fallback_widgets = [self._ip_input, self._connect_btn, self._retry_btn]
+        for w in self._fallback_widgets:
+            w.hide()
 
         outer.addLayout(center)
         outer.addStretch(3)
@@ -1203,15 +1227,17 @@ class ConnectionScreen(QWidget):
     def show_status(self, msg, color=TEXT_DIM):
         """Show status text (e.g. 'Discovering machine...'), hide fallback."""
         self._status.setText(msg)
-        self._status.setStyleSheet(f"color: {color}; background: transparent;")
-        self._fallback.hide()
+        self._status.setStyleSheet(f"color: {color}; border: none;")
+        for w in self._fallback_widgets:
+            w.hide()
 
     def start_animation(self, base_text="Connecting"):
         self._anim_base_text = base_text
         self._dots = 0
         self._status.setText(base_text)
-        self._status.setStyleSheet(f"color: {GOLD}; background: transparent;")
-        self._fallback.hide()
+        self._status.setStyleSheet(f"color: {GOLD}; border: none;")
+        for w in self._fallback_widgets:
+            w.hide()
         self._anim_timer.start(400)
 
     def stop_animation(self):
@@ -1225,15 +1251,16 @@ class ConnectionScreen(QWidget):
         """Show error and manual connection controls."""
         self.stop_animation()
         self._status.setText(error_msg)
-        self._status.setStyleSheet(f"color: {AMBER}; background: transparent;")
+        self._status.setStyleSheet(f"color: {AMBER}; border: none;")
         self._ip_input.setText(default_ip)
-        self._fallback.show()
+        for w in self._fallback_widgets:
+            w.show()
 
     def _on_manual_connect(self):
         ip = self._ip_input.text().strip()
         if not ip:
             self._status.setText("Enter the dongle's IP address")
-            self._status.setStyleSheet(f"color: {RED}; background: transparent;")
+            self._status.setStyleSheet(f"color: {RED}; border: none;")
             return
         self.start_animation("Connecting")
         self.manual_connect.emit(ip, DONGLE_PORT)
@@ -1303,17 +1330,17 @@ class MaintenanceBar(QWidget):
         top.setSpacing(0)
         lbl = QLabel(label)
         lbl.setFont(make_font(11, QFont.DemiBold))
-        lbl.setStyleSheet(f"color: {TEXT}; background: transparent;")
+        lbl.setStyleSheet(f"color: {TEXT}; border: none;")
         top.addWidget(lbl)
         top.addStretch()
         self._pct_label = QLabel("\u2014")
         self._pct_label.setFont(make_font(11, QFont.DemiBold))
-        self._pct_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._pct_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         top.addWidget(self._pct_label)
         top.addSpacing(16)
         self._count_label = QLabel("")
         self._count_label.setFont(make_font(10))
-        self._count_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._count_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         self._count_label.setFixedWidth(80)
         self._count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         top.addWidget(self._count_label)
@@ -1329,7 +1356,7 @@ class MaintenanceBar(QWidget):
         self._count = count
         if pct < 0:
             self._pct_label.setText("N/A")
-            self._pct_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+            self._pct_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
             self._count_label.setText("")
             self._bar.setStyleSheet(f"""
                 background-color: {BORDER};
@@ -1338,7 +1365,7 @@ class MaintenanceBar(QWidget):
         else:
             color = GREEN if pct > 50 else (AMBER if pct > 20 else RED)
             self._pct_label.setText(f"{pct}%")
-            self._pct_label.setStyleSheet(f"color: {color}; background: transparent;")
+            self._pct_label.setStyleSheet(f"color: {color}; border: none;")
             self._count_label.setText(f"{count} cycle{'s' if count != 1 else ''}")
             self._bar.setStyleSheet(f"""
                 background: qlineargradient(
@@ -1436,7 +1463,7 @@ class StatisticsScreen(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         content = QWidget()
-        content.setStyleSheet("background: transparent;")
+        content.setStyleSheet("border: none;")
         c_lay = QVBoxLayout(content)
         c_lay.setContentsMargins(48, 36, 48, 40)
         c_lay.setSpacing(0)
@@ -1444,7 +1471,7 @@ class StatisticsScreen(QWidget):
         # -- Beverages section --
         bev_label = QLabel("B E V E R A G E S")
         bev_label.setFont(make_font(10, QFont.DemiBold, spacing=4))
-        bev_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        bev_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         bev_label.setAlignment(Qt.AlignCenter)
         c_lay.addWidget(bev_label)
         c_lay.addSpacing(24)
@@ -1464,7 +1491,7 @@ class StatisticsScreen(QWidget):
 
         self._total_label = QLabel("")
         self._total_label.setFont(make_font(12))
-        self._total_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._total_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         self._total_label.setAlignment(Qt.AlignCenter)
         c_lay.addWidget(self._total_label)
         c_lay.addSpacing(36)
@@ -1479,7 +1506,7 @@ class StatisticsScreen(QWidget):
         # -- Maintenance section --
         maint_label = QLabel("M A I N T E N A N C E")
         maint_label.setFont(make_font(10, QFont.DemiBold, spacing=4))
-        maint_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        maint_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         maint_label.setAlignment(Qt.AlignCenter)
         c_lay.addWidget(maint_label)
         c_lay.addSpacing(28)
@@ -1503,7 +1530,7 @@ class StatisticsScreen(QWidget):
         # Status line
         self._status_label = QLabel("")
         self._status_label.setFont(make_font(10))
-        self._status_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._status_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
         self._status_label.setAlignment(Qt.AlignCenter)
         c_lay.addWidget(self._status_label)
 
@@ -1522,7 +1549,7 @@ class StatisticsScreen(QWidget):
 
     def show_loading(self):
         self._status_label.setText("Loading statistics")
-        self._status_label.setStyleSheet(f"color: {GOLD}; background: transparent;")
+        self._status_label.setStyleSheet(f"color: {GOLD}; border: none;")
         self._refresh_btn.setEnabled(False)
         self._load_dots = 0
         self._load_timer.start(400)
@@ -1554,7 +1581,7 @@ class StatisticsScreen(QWidget):
         import datetime
         now = datetime.datetime.now().strftime("%H:%M")
         self._status_label.setText(f"Last refreshed at {now}")
-        self._status_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        self._status_label.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
 
 
 # ---------------------------------------------------------------------------
@@ -1659,7 +1686,7 @@ class DashboardScreen(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         scroll_content = QWidget()
-        scroll_content.setStyleSheet("background: transparent;")
+        scroll_content.setStyleSheet("background: transparent; border: none;")
         scroll_lay = QVBoxLayout(scroll_content)
         scroll_lay.setContentsMargins(0, 40, 0, 40)
 
@@ -2182,7 +2209,8 @@ class JuraApp(QMainWindow):
             self._dashboard.set_disconnected()
             self._stack.setCurrentWidget(self._conn_screen)
             self._conn_screen.show_status("Disconnected", AMBER)
-            self._conn_screen._fallback.show()
+            for w in self._conn_screen._fallback_widgets:
+                w.show()
             self._conn_screen._ip_input.setText(
                 self._settings.get("dongle_ip", DEFAULT_DONGLE_IP)
             )
@@ -2212,6 +2240,7 @@ class JuraApp(QMainWindow):
         if self._wifi.is_brewing:
             self._dashboard.on_brew_error("A brew is already in progress")
             return
+        self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
         # Save preferences
         product = next((p for p in E4_PRODUCTS if p.code == code), None)
         if product:
@@ -2226,8 +2255,11 @@ class JuraApp(QMainWindow):
     def _on_status(self, alerts):
         self._dashboard.update_alerts(alerts)
         if any(bit == 31 for bit, _, _ in alerts):
-            self._brew_timer.start(3000)
-            self._brew_safety_timer.stop()
+            # Only start brew cleanup timer if a brew animation is active —
+            # bit 31 persists from old brews and would kill new animations
+            if self._dashboard._brewing_card_idx is not None:
+                self._brew_timer.start(3000)
+                self._brew_safety_timer.stop()
         if self._wifi.is_brewing:
             critical_bits = {0, 1, 2, 4, 5, 6, 10}
             for bit, name, _ in alerts:
@@ -2237,6 +2269,7 @@ class JuraApp(QMainWindow):
                     break
 
     def _on_brew_started(self):
+        self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
         self._dashboard.on_brew_started()
         self._brew_safety_timer.start(120_000)
 
