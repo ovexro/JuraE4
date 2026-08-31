@@ -1965,7 +1965,7 @@ class JuraApp(QMainWindow):
         # Brew completion timer
         self._brew_timer = QTimer(self)
         self._brew_timer.setSingleShot(True)
-        self._brew_timer.timeout.connect(self._dashboard.on_brew_status_clear)
+        self._brew_timer.timeout.connect(self._on_brew_stale_alert_timeout)
 
         # Brew safety timeout (120s max brew time)
         self._brew_safety_timer = QTimer(self)
@@ -2255,9 +2255,16 @@ class JuraApp(QMainWindow):
     def _on_status(self, alerts):
         self._dashboard.update_alerts(alerts)
         if any(bit == 31 for bit, _, _ in alerts):
-            # Only start brew cleanup timer if a brew animation is active —
-            # bit 31 persists from old brews and would kill new animations
-            if self._dashboard._brewing_card_idx is not None:
+            # Bit 31 ("Enjoy your coffee") is a fallback safety net for the
+            # rare case where the machine's own @TV completion push was
+            # somehow missed -- it must NOT be treated as "this brew just
+            # finished" while the backend itself still considers a brew in
+            # flight. Bit 31 can legitimately persist on the machine's own
+            # status from a PREVIOUS brew while a brand new one is actively
+            # pouring; gating only on "is some card showing an animation"
+            # (the old check) couldn't tell those two cases apart and could
+            # snap a genuinely in-progress brew's overlay shut early.
+            if self._dashboard._brewing_card_idx is not None and not self._wifi.is_brewing:
                 self._brew_timer.start(3000)
                 self._brew_safety_timer.stop()
         if self._wifi.is_brewing:
@@ -2286,6 +2293,16 @@ class JuraApp(QMainWindow):
     def _on_brew_timeout(self):
         self._dashboard.on_brew_error("Brew timed out (120s)")
         self._dashboard.on_brew_status_clear()
+
+    def _on_brew_stale_alert_timeout(self):
+        """Fires 3s after a lingering 'Enjoy your coffee' status alert with
+        no backend brew in flight -- meaning the primary @TV completion
+        push was likely missed. Drive the same graceful completion path a
+        real 100% progress update would (2.5s 'Enjoy' animation, then the
+        toast + unlock), instead of silently snapping the UI back to
+        controls with no explanation. A no-op if nothing is showing as
+        brewing by the time this fires."""
+        self._dashboard.on_brew_progress(100, 0)
 
     def _on_error(self, msg):
         if self._stack.currentWidget() == self._conn_screen:
