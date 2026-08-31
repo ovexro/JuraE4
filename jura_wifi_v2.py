@@ -202,9 +202,11 @@ class WiFiV2Manager(QObject):
         self._brewing = False
         self._last_brew_time = 0.0
         self._sock: Optional[socket.socket] = None
+        self._recv_buf: bytes = b""
         self._stop_event = threading.Event()
         self._recv_thread: Optional[threading.Thread] = None
         self._poll_thread: Optional[threading.Thread] = None
+        self._brew_thread: Optional[threading.Thread] = None
         self._dongle_ip: Optional[str] = None
 
     # -- Thread-safe properties --
@@ -245,22 +247,30 @@ class WiFiV2Manager(QObject):
             return False
 
     def _recv_all(self, timeout: float = 2.0) -> List[str]:
-        """Receive and decrypt all pending messages."""
+        """Receive and decrypt all pending messages.
+
+        Must be called with `_sock_lock` held (all real callers go through
+        `_send_recv` or hold the lock themselves for a multi-step exchange).
+        Leftover undelimited bytes are carried over in `self._recv_buf` so a
+        message split across recv() calls -- or across separate `_recv_all`
+        calls -- is not silently discarded. A genuine connection failure
+        (socket closed, OSError) propagates to the caller; only an ordinary
+        "nothing arrived in time" timeout is absorbed here.
+        """
         messages = []
         if self._sock is None:
             return messages
-        self._sock.settimeout(timeout)
-        buf = b""
         try:
+            self._sock.settimeout(timeout)
             while True:
                 chunk = self._sock.recv(RECV_BUF)
                 if not chunk:
-                    break
-                buf += chunk
-                while b"\r\n" in buf:
-                    idx = buf.index(b"\r\n")
-                    raw_msg = buf[:idx + 2]
-                    buf = buf[idx + 2:]
+                    raise ConnectionError("Connection closed by dongle")
+                self._recv_buf += chunk
+                while b"\r\n" in self._recv_buf:
+                    idx = self._recv_buf.index(b"\r\n")
+                    raw_msg = self._recv_buf[:idx + 2]
+                    self._recv_buf = self._recv_buf[idx + 2:]
                     try:
                         plain = decrypt(raw_msg).rstrip("\r\n")
                         messages.append(plain)
@@ -269,8 +279,6 @@ class WiFiV2Manager(QObject):
                         logger.warning("V2 decrypt error: %s", e)
                 self._sock.settimeout(0.3)
         except socket.timeout:
-            pass
-        except (OSError, socket.error):
             pass
         return messages
 
@@ -338,11 +346,18 @@ class WiFiV2Manager(QObject):
                 remaining = int(BREW_COOLDOWN_SECONDS - (now - self._last_brew_time))
                 self.brew_error.emit(f"Please wait {remaining}s between brews")
                 return
-        threading.Thread(
+            # Set the flag here, atomically with the check above, instead of
+            # inside the spawned thread -- otherwise two near-simultaneous
+            # brew() calls (e.g. tray quick-brew racing a card brew) could
+            # both pass the check before either marks itself as brewing.
+            self._brewing = True
+            self._last_brew_time = now
+        self._brew_thread = threading.Thread(
             target=self._do_brew,
             args=(product_code, strength, volume_ml, volume_step, temperature),
             daemon=True,
-        ).start()
+        )
+        self._brew_thread.start()
 
     def _send_recv(self, cmd: str, timeout: float = 2.0) -> List[str]:
         """Thread-safe send command and receive responses."""
@@ -355,7 +370,10 @@ class WiFiV2Manager(QObject):
         """Send a raw @ command. Returns first response or None."""
         if not self._connected or self._sock is None:
             return None
-        resps = self._send_recv(cmd)
+        try:
+            resps = self._send_recv(cmd)
+        except OSError:
+            return None
         return resps[0] if resps else None
 
     def disconnect_and_wait(self, timeout=3):
@@ -415,37 +433,56 @@ class WiFiV2Manager(QObject):
             self._dongle_ip = ip
             logger.info("V2 connect: %s:%d", ip, DONGLE_PORT)
 
+            # A previous connection's background threads may still be
+            # winding down (e.g. reconnecting right after a drop) -- join
+            # them before reusing self._stop_event, otherwise a stale
+            # thread can keep reading from the NEW socket below and steal
+            # bytes meant for this connection (e.g. a brew acknowledgment).
+            self._stop_event.set()
+            current = threading.current_thread()
+            if self._poll_thread and self._poll_thread is not current and self._poll_thread.is_alive():
+                self._poll_thread.join(timeout=3)
+            if self._brew_thread and self._brew_thread is not current and self._brew_thread.is_alive():
+                self._brew_thread.join(timeout=3)
+
             # TCP connect
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(TCP_TIMEOUT)
             sock.connect((ip, DONGLE_PORT))
             self._sock = sock
+            self._recv_buf = b""
 
-            # Authenticate
-            name_hex = DEVICE_NAME.encode("ascii").hex().upper()
-            hp_cmd = f"@HP:,{name_hex},{self._auth_hash}"
-            if not self._send(hp_cmd):
-                self._close_socket()
-                self.connect_fail.emit("Failed to send authentication")
-                return
+            with self._sock_lock:
+                # Authenticate
+                name_hex = DEVICE_NAME.encode("ascii").hex().upper()
+                hp_cmd = f"@HP:,{name_hex},{self._auth_hash}"
+                if not self._send(hp_cmd):
+                    self._close_socket()
+                    self.connect_fail.emit("Failed to send authentication")
+                    return
 
-            resps = self._recv_all(timeout=3)
-            hp_ok = any(r.startswith("@hp") for r in resps)
-            if not hp_ok:
-                self._close_socket()
-                self.connect_fail.emit(
-                    f"Authentication rejected by dongle at {ip}\n"
-                    "The auth hash may need to be re-captured from J.O.E."
-                )
-                return
+                resps = self._recv_all(timeout=3)
+                # @hp4 = accepted, @hp5:XX = rejected -- both start with the
+                # substring "@hp", so the success check must match @hp4
+                # specifically or a rejected hash is reported as connected.
+                hp_ok = any(r.startswith("@hp4") for r in resps)
+                if not hp_ok:
+                    reason = next((r for r in resps if r.startswith("@hp5")), None)
+                    self._close_socket()
+                    self.connect_fail.emit(
+                        f"Authentication rejected by dongle at {ip}"
+                        + (f" ({reason})" if reason else "") + "\n"
+                        "The auth hash may need to be re-captured from J.O.E."
+                    )
+                    return
 
-            # Start session
-            self._send("@TS:01")
-            self._recv_all(timeout=1)
+                # Start session
+                self._send("@TS:01")
+                self._recv_all(timeout=1)
 
-            # Read machine type for display
-            self._send("@TG:C0")
-            tg_resps = self._recv_all(timeout=2)
+                # Read machine type for display
+                self._send("@TG:C0")
+                tg_resps = self._recv_all(timeout=2)
 
             self._set_connected(True)
             self._stop_event.clear()
@@ -490,16 +527,28 @@ class WiFiV2Manager(QObject):
             was_connected = self._connected
             self._connected = False
             self._brewing = False
+        # Signal any in-flight status-poll / brew loop to stop before we
+        # touch the socket, so it releases _sock_lock promptly (within its
+        # current recv timeout) instead of us blocking on a lock that a
+        # loop won't release until it notices we're disconnecting.
         self._stop_event.set()
 
-        # Send session close
-        if self._sock:
-            try:
-                self._send("@TS:00")
-                time.sleep(0.2)
-            except Exception:
-                pass
-        self._close_socket()
+        current = threading.current_thread()
+        if self._poll_thread and self._poll_thread is not current and self._poll_thread.is_alive():
+            self._poll_thread.join(timeout=3)
+        if self._brew_thread and self._brew_thread is not current and self._brew_thread.is_alive():
+            self._brew_thread.join(timeout=3)
+
+        with self._sock_lock:
+            if self._sock:
+                try:
+                    self._send("@TS:00")
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+            self._close_socket()
+            self._recv_buf = b""
+
         if was_connected:
             self.disconnected.emit()
 
@@ -637,42 +686,49 @@ class WiFiV2Manager(QObject):
 
         stats = MachineStatistics()
 
-        # 1. Maintenance percentages (@TG:C0)
-        #    3 bytes: Cleaning %, Filter %, Descaling % (255 = N/A)
-        for r in self._send_recv("@TG:C0"):
-            if r.startswith("@tg:C0") and len(r) >= 12:
-                try:
-                    b = bytes.fromhex(r[6:12])
-                    stats.cleaning_pct = b[0] if b[0] != 255 else -1
-                    stats.filter_pct = b[1] if b[1] != 255 else -1
-                    stats.descaling_pct = b[2] if b[2] != 255 else -1
-                except (ValueError, IndexError):
-                    pass
-                break
+        try:
+            # 1. Maintenance percentages (@TG:C0)
+            #    3 bytes: Cleaning %, Filter %, Descaling % (255 = N/A)
+            for r in self._send_recv("@TG:C0"):
+                if r.startswith("@tg:C0") and len(r) >= 12:
+                    try:
+                        b = bytes.fromhex(r[6:12])
+                        stats.cleaning_pct = b[0] if b[0] != 255 else -1
+                        stats.filter_pct = b[1] if b[1] != 255 else -1
+                        stats.descaling_pct = b[2] if b[2] != 255 else -1
+                    except (ValueError, IndexError):
+                        pass
+                    break
 
-        # 2. Maintenance counters (@TG:43)
-        #    2 bytes each: Cleaning, Filter, Descaling, ...
-        for r in self._send_recv("@TG:43"):
-            if r.startswith("@tg:43"):
-                hex_data = r[6:]
-                try:
-                    if len(hex_data) >= 4:
-                        stats.cleaning_count = int(hex_data[0:4], 16)
-                    if len(hex_data) >= 8:
-                        stats.filter_count = int(hex_data[4:8], 16)
-                    if len(hex_data) >= 12:
-                        stats.descaling_count = int(hex_data[8:12], 16)
-                except ValueError:
-                    pass
-                break
+            # 2. Maintenance counters (@TG:43)
+            #    2 bytes each: Cleaning, Filter, Descaling, ...
+            for r in self._send_recv("@TG:43"):
+                if r.startswith("@tg:43"):
+                    hex_data = r[6:]
+                    try:
+                        if len(hex_data) >= 4:
+                            stats.cleaning_count = int(hex_data[0:4], 16)
+                        if len(hex_data) >= 8:
+                            stats.filter_count = int(hex_data[4:8], 16)
+                        if len(hex_data) >= 12:
+                            stats.descaling_count = int(hex_data[8:12], 16)
+                    except ValueError:
+                        pass
+                    break
 
-        # 3. Product counters (@TR:32,00) — page 0
-        #    Contains: Total (pos 0), pos 1, Espresso (pos 2), Coffee (pos 3)
-        self._read_product_page("00", 0, stats)
+            # 3. Product counters (@TR:32,00) — page 0
+            #    Contains: Total (pos 0), pos 1, Espresso (pos 2), Coffee (pos 3)
+            self._read_product_page("00", 0, stats)
 
-        # 4. Product counters (@TR:32,03) — page 3
-        #    Contains: pos 12, Hot Water (pos 13 = 0x0D), pos 14, pos 15
-        self._read_product_page("03", 3, stats)
+            # 4. Product counters (@TR:32,03) — page 3
+            #    Contains: pos 12, Hot Water (pos 13 = 0x0D), pos 14, pos 15
+            self._read_product_page("03", 3, stats)
+        except Exception:
+            # A mid-read disconnect (or any other socket failure) must not
+            # silently kill this daemon thread -- fall through and emit
+            # whatever was gathered so far so the GUI's loading spinner
+            # resolves instead of hanging forever.
+            logger.exception("V2 statistics read failed partway through")
 
         logger.info(
             "V2 statistics: total=%d espresso=%d coffee=%d hotwater=%d "
@@ -726,18 +782,16 @@ class WiFiV2Manager(QObject):
 
     def _do_brew(self, product_code, strength, volume_ml, volume_step, temperature):
         if not self._connected or self._sock is None:
+            self._set_brewing(False)
             self.brew_error.emit("Not connected")
             return
 
         if product_code not in E4_PRODUCTS_V2:
+            self._set_brewing(False)
             self.brew_error.emit(f"Unknown product code: {product_code:#04x}")
             return
 
         try:
-            self._set_brewing(True)
-            with self._lock:
-                self._last_brew_time = time.monotonic()
-
             # Build @TP parameter (16 bytes = 32 hex chars)
             params = bytearray(16)
             params[0] = product_code & 0xFF
@@ -754,54 +808,85 @@ class WiFiV2Manager(QObject):
                 strength, volume_ml, temperature,
             )
 
-            if not self._send(f"@TP:{tp_hex}"):
-                self._set_brewing(False)
-                self.brew_error.emit("Failed to send brew command")
-                return
+            # Hold _sock_lock for the whole brew exchange -- send, ack-wait,
+            # and the live-progress listen loop -- so the status-poll
+            # thread can never interleave a recv() on the same TCP stream
+            # while a brew is in flight. It blocks on this lock instead
+            # (and its own `if self._brewing` guard means it normally
+            # won't even try, except in the narrow window right as a brew
+            # starts -- which this lock now closes too).
+            with self._sock_lock:
+                if not self._send(f"@TP:{tp_hex}"):
+                    self._set_brewing(False)
+                    self.brew_error.emit("Failed to send brew command")
+                    return
 
-            # Wait for @tp acknowledgment
-            resps = self._recv_all(timeout=5)
-            tp_ok = any(r.startswith("@tp") for r in resps)
-            if not tp_ok:
-                self._set_brewing(False)
-                self.brew_error.emit("Machine did not acknowledge brew command")
-                return
+                # Wait for @tp acknowledgment. A fast-responding dongle can
+                # bundle @TB and/or early @TV progress in the same burst as
+                # the ack -- process every message collected here instead
+                # of discarding whatever isn't the ack itself.
+                resps = self._recv_all(timeout=5)
+                tp_ok = any(r.startswith("@tp") for r in resps)
+                if not tp_ok:
+                    self._set_brewing(False)
+                    self.brew_error.emit("Machine did not acknowledge brew command")
+                    return
 
-            self.brew_started.emit()
-            logger.info("V2 brew: acknowledged, listening for live progress")
+                self.brew_started.emit()
+                logger.info("V2 brew: acknowledged, listening for live progress")
 
-            # Listen for @TB/@TV push messages (real-time progress from dongle)
-            deadline = time.monotonic() + 120  # 120s safety timeout
-            while self._brewing and time.monotonic() < deadline:
-                if self._stop_event.is_set():
-                    break
-                resps = self._recv_all(timeout=2)
+                completed = False
                 for r in resps:
-                    if r.startswith("@TV:"):
-                        hex_data = r[4:]
-                        if len(hex_data) <= 4:
-                            # Short @TV = brew complete
-                            logger.info("V2 brew: complete (short @TV)")
-                            self.brew_progress.emit(100, 0)
-                            self._set_brewing(False)
+                    if self._process_brew_push(r):
+                        completed = True
+
+                # Listen for further @TB/@TV push messages (real-time
+                # progress from the dongle).
+                deadline = time.monotonic() + 120  # 120s safety timeout
+                while not completed and self._brewing and time.monotonic() < deadline:
+                    if self._stop_event.is_set():
+                        break
+                    resps = self._recv_all(timeout=2)
+                    for r in resps:
+                        if self._process_brew_push(r):
+                            completed = True
                             break
-                        if len(hex_data) >= 30:
-                            # Full @TV: byte 14 = progress, byte 0 = temperature
-                            try:
-                                pct = int(hex_data[28:30], 16)
-                                temp_c = int(hex_data[0:2], 16)
-                                logger.debug("V2 brew: %d%% temp=%d°C", pct, temp_c)
-                                self.brew_progress.emit(min(pct, 100), temp_c)
-                                if pct >= 100:
-                                    self._set_brewing(False)
-                                    break
-                            except ValueError:
-                                pass
-                    elif r.startswith("@TB"):
-                        logger.info("V2 brew: begin signal")
+
+                if not completed and self._brewing and not self._stop_event.is_set():
+                    logger.warning("V2 brew: no completion signal within 120s safety timeout")
+                    self.brew_error.emit("Brew did not report completion within 120s")
 
             self._set_brewing(False)
 
         except Exception as e:
             self._set_brewing(False)
             self.brew_error.emit(str(e))
+
+    def _process_brew_push(self, r: str) -> bool:
+        """Handle one push message received while a brew is in flight.
+
+        Returns True if this message signals that the brew has completed.
+        Shared by the ack-wait step and the main listen loop so a message
+        bundled together with the @tp ack is handled the same way as one
+        that arrives later on its own.
+        """
+        if r.startswith("@TV:"):
+            hex_data = r[4:]
+            if len(hex_data) <= 4:
+                # Short @TV (e.g. "3E02") = brew complete
+                logger.info("V2 brew: complete (short @TV)")
+                self.brew_progress.emit(100, 0)
+                return True
+            if len(hex_data) >= 30:
+                # Full @TV: byte 14 = progress, byte 0 = temperature
+                try:
+                    pct = int(hex_data[28:30], 16)
+                    temp_c = int(hex_data[0:2], 16)
+                    logger.debug("V2 brew: %d%% temp=%d°C", pct, temp_c)
+                    self.brew_progress.emit(min(pct, 100), temp_c)
+                    return pct >= 100
+                except ValueError:
+                    pass
+        elif r.startswith("@TB"):
+            logger.info("V2 brew: begin signal")
+        return False
