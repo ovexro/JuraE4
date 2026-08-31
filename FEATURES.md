@@ -4,7 +4,7 @@ Single source of truth for what's implemented and what's not. Check items as the
 
 ## WiFi Connect V2 Protocol (jura_wifi_v2.py) — COMPLETE
 - [x] TCP 51515 encrypted protocol (nibble-substitution, discOne/discTwo S-boxes)
-- [x] @HP authentication with configurable hash
+- [x] @HP authentication with configurable hash (now correctly distinguishes @hp4 accept from @hp5:XX reject)
 - [x] @TS session control
 - [x] @TG:C0 maintenance status (Cleaning %, Filter %, Descaling %)
 - [x] @TG:43 maintenance counters (6 uint16 counters)
@@ -12,10 +12,12 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] @TP brew command with @TB/@TV live progress
 - [x] @TF full status bitmask parsing (40+ alerts)
 - [x] UDP discovery + direct IP connect
-- [x] Thread-safe socket operations (_sock_lock)
-- [x] MachineStatistics dataclass + read_statistics() background thread
-- [x] Brew cooldown (10s), status polling (4s), safety timeout (120s)
+- [x] Thread-safe socket operations (_sock_lock actually covers every send/recv/close now — brew, status poll, connect, disconnect, statistics all serialized on one shared TCP socket, fixed 2026-08-31)
+- [x] Persistent receive buffer across recv() calls — a message split mid-read is no longer silently dropped (fixed 2026-08-31)
+- [x] MachineStatistics dataclass + read_statistics() background thread (now crash-proof against a mid-read disconnect)
+- [x] Brew cooldown (10s, now race-free), status polling (4s), safety timeout (120s, now explicitly signals brew_error instead of failing silently)
 - [x] Connection refused -> "Close J.O.E. first" hint
+- [x] File-based rotating debug log (~/.config/jura-desktop/jura.log) for diagnosing brew/connection issues after the fact (added 2026-08-31)
 
 ## GUI — First-Launch Setup
 - [x] Shows when no auth hash is configured
@@ -36,6 +38,7 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] Reconnecting state (amber LED, 5 attempts x 5s)
 - [x] Brew animation — tracks full brew cycle (preparing -> heating -> pouring -> done)
 - [x] Brew animation timing matches real machine phases (waits for live data before filling cup)
+- [x] Brew overlay no longer closes early on a stale "Enjoy your coffee" status alert from a previous brew (gated on actual backend brewing state, fixed 2026-08-31, hardware-verified)
 
 ## GUI — Statistics & Maintenance
 - [x] 3 StatCounterCard widgets + total beverages
