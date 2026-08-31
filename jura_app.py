@@ -3,8 +3,10 @@ JURA Desktop Control — Premium coffee machine dashboard
 """
 
 import json
+import logging
 import sys
 import os
+from logging.handlers import RotatingFileHandler
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QSlider, QFrame, QStackedWidget,
@@ -2354,7 +2356,25 @@ class JuraApp(QMainWindow):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _setup_logging():
+    """Route every logger.debug/info/warning call (brew progress percent/
+    temp, connection state, protocol errors, etc.) to a rotating file --
+    without this, nothing configures a handler and it all goes nowhere,
+    making any brew/connection issue impossible to diagnose after the
+    fact."""
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    log_file = os.path.join(SETTINGS_DIR, "jura.log")
+    handler = RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=2)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+    ))
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+
+
 def main():
+    _setup_logging()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
