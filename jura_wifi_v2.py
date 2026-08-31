@@ -651,25 +651,6 @@ class WiFiV2Manager(QObject):
             alerts = [(13, "Coffee ready", "success")]
         return alerts
 
-    def _handle_brew_progress(self, tv_msg: str):
-        """Handle @TV: brew progress push messages."""
-        try:
-            hex_data = tv_msg[4:]
-            if len(hex_data) >= 4:
-                # Short @TV (4 chars like "3E02") = brew complete
-                if len(hex_data) <= 4:
-                    logger.info("V2: brew complete signal")
-                    self._set_brewing(False)
-                    return
-                # Long @TV: byte at offset 11 (hex chars 22-23) is progress 0-100
-                if len(hex_data) >= 24:
-                    progress_byte = int(hex_data[22:24], 16)
-                    logger.debug("V2: brew progress %d%%", progress_byte)
-                    if progress_byte >= 100:
-                        self._set_brewing(False)
-        except Exception:
-            pass
-
     # ======================================================================
     # Statistics & Maintenance
     # ======================================================================
