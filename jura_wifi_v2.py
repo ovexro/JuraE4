@@ -107,6 +107,18 @@ def encrypt(plaintext: str) -> bytes:
     return bytes([0x2a]) + bytes(out) + b"\r\n"
 
 
+def _redact_for_log(cmd: str) -> str:
+    """Mask the auth hash in an @HP:,<name_hex>,<hash> command before it's
+    written to the log file -- the hash is a durable per-dongle pairing
+    secret and shouldn't end up in a debug log."""
+    if cmd.startswith("@HP:"):
+        parts = cmd.split(",")
+        if len(parts) >= 3:
+            parts[-1] = "***"
+            return ",".join(parts)
+    return cmd
+
+
 def decrypt(raw: bytes) -> str:
     """Decrypt a wire-format message to plaintext string."""
     if not raw or raw[0] != 0x2a:
@@ -240,7 +252,7 @@ class WiFiV2Manager(QObject):
                 return False
             msg = encrypt(cmd + "\r\n")
             self._sock.sendall(msg)
-            logger.debug("V2 TX: %s", cmd)
+            logger.debug("V2 TX: %s", _redact_for_log(cmd))
             return True
         except (OSError, socket.error) as e:
             logger.warning("V2 send failed: %s", e)
