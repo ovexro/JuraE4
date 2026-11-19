@@ -8,27 +8,30 @@ A premium Linux desktop app for controlling the **JURA E4** coffee machine throu
 - **Three products**: Espresso, Coffee, Hot Water
 - Adjustable **strength** (1-3), **volume** (slider), and **temperature** (Low/Normal/High)
 - Confirmation dialog before every brew (safety)
-- **Live brewing animation** with real-time progress and temperature from the machine
+- **Pre-brew check** — refuses to start (and says why) when the machine reports a blocking alert: no water, no beans, grounds container full, tray/outlet/rear cover missing. Hot water only cares about the ones it needs
+- **Live brewing animation** with real-time progress and temperature from the machine. It starts only once the machine has *acknowledged* the brew, so a rejected request never plays a fake animation
 - Heating phase detection with pulsing "Heating up..." display
 - "Enjoy your coffee!" completion feedback
+- Cooldown between brews, measured from when the previous brew *finished*
 
 ### Statistics & Maintenance
 - **Lifetime product counters** — how many espressos, coffees, and hot waters have been made
-- **Maintenance progress bars** — Cleaning, Descaling, and Filter status (color-coded: green/amber/red)
+- **Maintenance bars** — Cleaning, Descaling, and Filter *wear*: **0% = just serviced, 100% = service due** (green below 75%, amber from 75%, red "due" at 100%; the filter shows N/A on machines without one)
 - **Cycle counters** — number of maintenance cycles performed
-- Maintenance warnings surface in the dashboard status bar when due
+- Maintenance warnings surface in the dashboard status bar when due; the false "Filter alert" some machines report is hidden when no filter is installed
+- Opening Statistics during a brew (or while disconnected) explains why instead of spinning forever
 
 ### Connection
 - **Auto-connect on launch** — tries saved IP, falls back to UDP discovery
-- **Auto-reconnect** on unexpected connection drops (5 attempts, 5 seconds apart)
+- **Auto-reconnect that never gives up** — after a drop it retries after 2, 5, 10, 20 and 30 s, then every 30 s, so the app is live again by itself when the machine comes back (e.g. after its auto-off); the header shows "Reconnecting..." and later "Machine unreachable — retrying (#N)". **Disconnect** works at any point, including mid-reconnect
+- **Fast failure detection** — a closed link is noticed within one poll (~4 s), a silent dongle within ~15 s, and the dongle ending the session (`@TS`, e.g. machine auto-off) immediately — also in the middle of a brew
 - **Settings persistence** — dongle IP and brew preferences saved across sessions
-- Clear error messages (e.g. "Close J.O.E. on your phone first" when the dongle is busy)
+- Clear error messages (e.g. "Close J.O.E. on your phone first" when the dongle is busy). The dongle frees its single connection slot slowly, so refused connects are retried for a few seconds before that message appears
 
 ### Desktop Integration
 - **System tray** — minimize to tray on close, quick-brew from the tray menu
-- Dark theme with gold accents
-- Custom-painted SVG/PNG icons
-- `.desktop` launcher
+- Dark theme with gold accents, large high-contrast controls (usable at the 900x680 minimum window size)
+- Custom-painted SVG/PNG icons (`icon.svg`, PNGs) — point a `.desktop` file at `run.sh` for a menu launcher
 
 ## Screenshots
 
@@ -112,7 +115,7 @@ Output:
 ============================================================
 
   Device name:  Your Phone
-  Auth hash:    CCC3B0FDD2EE35B9...
+  Auth hash:    0123456789ABCDEF...
 
   Paste this hash into the JURA Desktop Control app
   when prompted on first launch.
@@ -166,21 +169,23 @@ Key commands:
 |---------|---------|
 | `@HP:` | Authentication (static hash per dongle) |
 | `@TS:01/00` | Start/stop session |
-| `@TG:C0` | Maintenance status (cleaning/descaling/filter %) |
+| `@TG:C0` | Maintenance wear: cleaning / filter / descaling (0 = just serviced, 100 = due, 255 = n/a) |
 | `@TG:43` | Maintenance counters |
 | `@TR:32,XX` | Product counters (lifetime totals) |
 | `@TP:` | Brew command (product, strength, volume, temperature) |
 | `@TV:` | Brew progress push (real-time % and temperature) |
-| `@TF:` | Machine status bitmask (40+ alerts) |
+| `@TF:` | Machine status bitmask (40+ alerts), pushed with every poll |
+| `@TS` (push) | Dongle ended the session (seen right after the machine's auto-off) |
 
 The dongle handles all machine-level serial encryption internally — the desktop app only needs the WiFi-layer cipher.
 
 ### Threading Model
 
-- **Main thread**: Qt event loop (GUI rendering, signal dispatch)
-- **WiFiV2Manager**: daemon threads for status polling, brew progress, statistics reading
+- **Main thread**: Qt event loop (GUI rendering, signal dispatch); it never blocks on the network — connect, disconnect, statistics and brew all run on worker threads
+- **WiFiV2Manager**: daemon threads for status polling (every ~4 s), brew progress, statistics reading
 - **Communication**: Qt signals with automatic cross-thread queuing
-- **Safety**: `threading.Lock` for connection state, `_sock_lock` for socket send/recv atomicity
+- **Safety**: `threading.Lock` for connection state (never held while waiting or while emitting a signal), `_sock_lock` for socket send/recv atomicity
+- **Receive path**: `_recv_all(timeout, expect=<reply prefix>)` waits for the awaited reply, then only a 50 ms grace for messages the dongle bundles with it (the dongle answers a status poll with `@TF` at once and `@tg` ~200 ms later)
 
 ## Configuration
 
@@ -216,4 +221,4 @@ Private — not for redistribution.
 ## Credits
 
 - Protocol reverse-engineering: decompiled from the [J.O.E.](https://play.google.com/store/apps/details?id=ch.toptronic.joe) Android app
-- Built with [Claude Code](https://claude.ai/code) (Claude Opus 4.6)
+- Built with [Claude Code](https://claude.ai/code) (Claude Opus 4.6; later audit and hardening pass with Claude Sonnet 5.5)
