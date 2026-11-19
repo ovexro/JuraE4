@@ -24,8 +24,14 @@ Small tech debt, edge cases, or minor bugs noticed in passing. Not blocking anyt
 (empty)
 
 ### Not tested yet
-- Full brew on the real machine with the new ack-driven animation, pre-brew alert check and 54 ms progress path (read-only hardware checks passed 2026-11-19: connect, polling, statistics, disconnect/reconnect; a brew needs a cup under the outlet)
-- Mid-brew `@TS` / auto-off behaviour only verified against a fake dongle and the recorded log
+- Mid-brew `@TS` / machine switched off in the MIDDLE of a brew: only verified against a fake dongle (a real brew was verified end to end on 2026-11-19, see below)
+- Deliberately blocked machine (no water / no beans) to see what the machine itself pushes and whether the pre-brew check matches reality
+
+### Verified on the real machine (2026-11-19, first brew with the new code)
+- Espresso 45 ml through the GUI: confirm dialog -> cards locked -> ack in 166 ms -> "Brewing started!" -> heating 57->60 C (~16 s at 0%) -> 10..100% in ~14 s -> done, 32 s total; every `@TV` handled 50 ms after arrival (was 300 ms). Cards unlocked afterwards.
+- The dongle sent `@TS` 13 s after completion; the app noticed in ~110 ms and reconnected in 2.5 s (first attempt got `Connection reset by peer` during `@HP` because the dongle still held the old session; the 2 s backoff retry succeeded). Old code needed ~30 s.
+- During the heating phase the machine pushes 5-byte `@TV:21028F0x08` messages (byte 3 counts 01->08) that the app ignores; could drive a real "heating" progress.
+- Possible polish: treat `ConnectionResetError` during `@HP` like a refused connect (retry inside `_do_connect`) to save the 2 s backoff.
 
 ### External
 (empty)
