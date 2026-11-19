@@ -5,7 +5,8 @@ Forward-looking list: candidate next tasks, speculative enhancements, and known 
 ## Candidate next tasks
 
 Ideas proposed after the 2026-11-19 audit (notifications, single-instance/autostart, installer and setup guide have shipped):
-- **Publish the `.deb` to GitHub Releases** and do a real `sudo apt install ./...deb` + `apt remove` on a clean Ubuntu/Debian VM before calling it done (built and smoke-tested here, see packaging/README.md "What hasn't been verified"). AppImage/Flatpak are bigger jobs if ever wanted.
+- **Publish the `.deb` to GitHub Releases** -- tag v1.0.0 is pushed; `gh release create` was refused by the permission classifier (publishing/communication action). The user can run it, or grant that permission. AppImage/Flatpak are bigger jobs if ever wanted.
+- **Real install verified on Mint** (see packaging/README.md); still untried on Ubuntu/Debian specifically.
 - **Verify PCAPdroid with a real J.O.E. capture** — the setup guide recommends it (it records the phone's own traffic, no root) but the author's keys came from a router capture.
 - **Usage history**: snapshot the lifetime counters on each connect -> cups per day/week and "descaling due in ~N cups".
 - **Notification extras**: optional sound, "what to do" hint per blocking alert, click-to-open from the balloon (QSystemTrayIcon.messageClicked -> `_tray_show`).

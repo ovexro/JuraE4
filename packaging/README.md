@@ -36,6 +36,10 @@ This is a separate, independent route from `install.sh` (which builds its
 own venv in `~/.local/share/jura-desktop`); use one or the other, not both,
 to avoid two menu entries.
 
+## Real install, verified 2026-11-19
+
+`sudo apt install ./dist/jura-desktop_1.0.0_all.deb` was run for real on Linux Mint 22. First attempt: `Recommends: python3-scapy` pulled scapy's own Recommends chain (matplotlib -> scipy/sympy/ipython/tk...) -- **44 packages, 100+ MB**, for a one-time CLI step the setup guide already covers with `pip install scapy`. Fixed to `Suggests:` (apt never auto-installs that). Reinstalled: **5 packages** (python3-pyqt5, python3-pyqt5.sip, libqt5designer5, libqt5help5, python3-bleak) plus jura-desktop itself -- all directly needed, nothing incidental. The app ran correctly from the installed `/opt/jura-desktop` via `/usr/bin/jura-desktop`, using the `apt`-installed PyQt5/bleak (not this dev machine's pip packages). Everything was removed afterwards; the system was confirmed back to its pre-test package state.
+
 ## What hasn't been verified
 
 Built and tested here (file layout, launcher, `desktop-file-validate`, the

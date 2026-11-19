@@ -33,6 +33,17 @@ try:
     check("declares the needed Depends", all(p in control for p in ("python3-pyqt5", "python3-bleak")), control)
     check("Architecture: all (pure Python)", "Architecture: all" in control)
     check("version matches VERSION file", ("Version: %s" % version) in control)
+    # python3-scapy must NOT be Depends/Recommends: `apt install` auto-installs
+    # both, and scapy's own Recommends chain (matplotlib -> scipy/sympy/ipython/tk)
+    # pulled in ~44 packages / 100+ MB in a real test for a tool extract_hash.py
+    # only needs for one optional, one-time CLI step. Suggests is fine (never
+    # auto-installed); the README/setup guide already tell the user to
+    # `pip install scapy` themselves for that step.
+    check("python3-scapy is Suggests, not Depends/Recommends (avoids its heavy transitive deps)",
+          "Suggests: python3-scapy" in control
+          and "Recommends: python3-scapy" not in control
+          and not any(l.startswith("Depends:") and "scapy" in l for l in control.splitlines()),
+          control)
 
     listing = subprocess.run(["dpkg-deb", "-c", deb], capture_output=True, text=True).stdout
     for path in ("./opt/jura-desktop/jura_app.py", "./opt/jura-desktop/jura_wifi_v2.py",
