@@ -1931,11 +1931,15 @@ class Settings:
             self._data = {}
 
     def save(self):
-        os.makedirs(SETTINGS_DIR, exist_ok=True)
+        # The file can hold the dongle auth hash (a durable pairing secret), so
+        # it is created owner-only (0600) in an owner-only (0700) directory.
+        os.makedirs(SETTINGS_DIR, mode=0o700, exist_ok=True)
         tmp = SETTINGS_FILE + ".tmp"
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(self._data, f, indent=2)
         os.replace(tmp, SETTINGS_FILE)
+        os.chmod(SETTINGS_FILE, 0o600)   # also tightens a file written by an older version
 
     def get(self, key, default=None):
         return self._data.get(key, default)
