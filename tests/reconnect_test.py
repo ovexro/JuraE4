@@ -38,7 +38,7 @@ class Set:
 def mk():
     a=J.JuraApp.__new__(J.JuraApp); a._wifi=Wf(); a._dashboard=Dash(); a._conn_screen=Conn(); a._stack=Stack(); a._settings=Set()
     a._reconnect_timer=Timer(); a._brew_safety_timer=Timer(); a._tray=None; a._update_tray_brew_actions=lambda c: None
-    a._user_disconnect=False; a._reconnecting=False; a._reconnect_attempts=0; a._tried_scan=False; a._last_alerts=None; a._offline_by_user=False
+    a._user_disconnect=False; a._reconnecting=False; a._reconnect_attempts=0; a._tried_scan=False; a._last_alerts=None; a._offline_by_user=False; a._lost_timer=Timer(); a._lost_notified=False; a._notified_bits=set(); a._brew_notified=False; a._brew_name=None
     return a
 # a) unexpected drop -> reconnect forever with growing pauses, never the give-up screen
 a=mk(); a._wifi.connected=True; a._on_disconnected()

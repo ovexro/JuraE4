@@ -1958,6 +1958,34 @@ class Settings:
 # Main Window
 # ---------------------------------------------------------------------------
 
+# Alerts worth a desktop notification the moment they first appear, with the
+# action the user has to take. (Informational ones -- "Coffee ready", "Energy
+# save", "Keys locked" -- are deliberately absent.)
+NOTIFY_ALERTS = {
+    0: "Insert the drip tray",
+    1: "Fill the water tank",
+    2: "Empty the grounds container",
+    3: "Empty the drip tray",
+    4: "Insert the coffee bin",
+    5: "Outlet missing",
+    6: "Rear cover missing",
+    10: "Refill the beans",
+    32: "Filter needs changing",
+    33: "Descaling needed",
+    34: "Cleaning needed",
+}
+NOTIFY_LOST_AFTER_MS = 15_000   # a drop must last this long before we announce it
+
+
+def new_alert_notifications(alerts, already):
+    """Messages for notable alerts that have JUST appeared, plus the set of
+    notable bits active now. Pass the returned set back in as `already` next
+    time: an alert is announced once when it appears, again only after it went
+    away and came back (no repeat every 4 s poll)."""
+    current = {bit for bit, _, _ in alerts if bit in NOTIFY_ALERTS}
+    return [NOTIFY_ALERTS[b] for b in sorted(current - already)], current
+
+
 # Auto-reconnect never gives up (the machine may simply be switched off or
 # auto-off'd for hours; when it comes back the app should be live again with
 # no click). Pauses grow, then repeat at the last value.
@@ -1980,6 +2008,10 @@ class JuraApp(QMainWindow):
         self._tried_scan = False
         self._last_alerts = None  # latest status poll; None until the first one
         self._offline_by_user = False  # user pressed Disconnect: no auto (re)connects
+        self._notified_bits = set()    # notable alerts already announced (cleared when they go away)
+        self._lost_notified = False    # "lost connection" was announced -> announce "back online"
+        self._brew_notified = False
+        self._brew_name = None
 
         # Apply saved auth hash (overrides the module default)
         saved_hash = self._settings.get("auth_hash")
@@ -2041,6 +2073,12 @@ class JuraApp(QMainWindow):
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._try_reconnect)
+
+        # Announce a connection loss only if it lasts (a post-brew session
+        # reset heals in ~2.5 s and must not spam)
+        self._lost_timer = QTimer(self)
+        self._lost_timer.setSingleShot(True)
+        self._lost_timer.timeout.connect(self._on_lost_timeout)
 
         # System tray
         self._quitting = False
@@ -2109,6 +2147,11 @@ class JuraApp(QMainWindow):
         menu.addAction(self._tray_hotwater)
 
         menu.addSeparator()
+        self._tray_notify = QAction("Notifications", self)
+        self._tray_notify.setCheckable(True)
+        self._tray_notify.setChecked(self._notifications_enabled())
+        self._tray_notify.toggled.connect(self._on_notify_toggled)
+        menu.addAction(self._tray_notify)
         self._tray_status = QAction("Not connected", self)
         self._tray_status.setEnabled(False)
         menu.addAction(self._tray_status)
@@ -2121,6 +2164,36 @@ class JuraApp(QMainWindow):
         self._tray.setContextMenu(menu)
         self._tray.show()
         self._update_tray_brew_actions(False)
+
+    # -- Desktop notifications (system tray balloons) --
+
+    def _notifications_enabled(self):
+        return bool(self._settings.get("notifications", True))
+
+    def _on_notify_toggled(self, on):
+        self._settings.set("notifications", bool(on))
+        self._settings.save()
+
+    def _notify(self, title, text, icon=None):
+        if not self._tray or not self._notifications_enabled():
+            return
+        self._tray.showMessage(
+            title, text,
+            QSystemTrayIcon.Information if icon is None else icon, 8000,
+        )
+
+    def _window_in_use(self):
+        """True when the user is looking at the window (no balloon needed)."""
+        return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
+
+    def _on_lost_timeout(self):
+        if self._reconnecting and not self._offline_by_user:
+            self._lost_notified = True
+            self._notify(
+                "Lost connection to the machine",
+                "It may be switched off or out of range. Still trying to reconnect.",
+                QSystemTrayIcon.Warning,
+            )
 
     def _update_tray_brew_actions(self, connected):
         if not self._tray:
@@ -2227,6 +2300,10 @@ class JuraApp(QMainWindow):
             return
         self._reconnecting = False
         self._reconnect_attempts = 0
+        self._lost_timer.stop()
+        if self._lost_notified:
+            self._lost_notified = False
+            self._notify("Machine back online", "Connection to the JURA E4 restored.")
         self._conn_screen.stop_animation()
 
         # Save the working IP for next launch
@@ -2271,6 +2348,8 @@ class JuraApp(QMainWindow):
 
         if self._user_disconnect:
             self._user_disconnect = False
+            self._lost_timer.stop()
+            self._lost_notified = False
             self._dashboard.set_disconnected()
             self._stack.setCurrentWidget(self._conn_screen)
             self._conn_screen.show_status("Disconnected", AMBER)
@@ -2282,6 +2361,7 @@ class JuraApp(QMainWindow):
             return
 
         # Unexpected disconnect — auto-reconnect
+        self._lost_timer.start(NOTIFY_LOST_AFTER_MS)
         self._reconnecting = True
         self._reconnect_attempts = 0
         self._dashboard.set_reconnecting()
@@ -2322,6 +2402,8 @@ class JuraApp(QMainWindow):
         self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
         # Save preferences
         product = next((p for p in E4_PRODUCTS if p.code == code), None)
+        self._brew_name = product.name if product else "Coffee"
+        self._brew_notified = False
         if product:
             self._settings.set_product(product.name, strength, vol_ml, temp)
             self._settings.save()
@@ -2347,6 +2429,9 @@ class JuraApp(QMainWindow):
 
     def _on_status(self, alerts):
         self._last_alerts = alerts
+        msgs, self._notified_bits = new_alert_notifications(alerts, self._notified_bits)
+        if msgs:
+            self._notify("Machine needs attention", "\n".join(msgs), QSystemTrayIcon.Warning)
         self._dashboard.update_alerts(alerts)
         if any(bit == 31 for bit, _, _ in alerts):
             # Bit 31 ("Enjoy your coffee") is a fallback safety net for the
@@ -2372,10 +2457,16 @@ class JuraApp(QMainWindow):
         if percent >= 100:
             self._brew_safety_timer.stop()
             self._brew_timer.start(3000)
+            if not self._brew_notified:   # 100% can arrive twice (full + short @TV)
+                self._brew_notified = True
+                if not self._window_in_use():
+                    self._notify(f"{self._brew_name or 'Coffee'} is ready", "Enjoy your coffee!")
 
     def _on_brew_error(self, msg):
         self._dashboard.on_brew_error(msg)
         self._brew_safety_timer.stop()
+        if not self._window_in_use():
+            self._notify("Brew failed", msg, QSystemTrayIcon.Warning)
 
     def _on_brew_timeout(self):
         self._dashboard.on_brew_error("Brew timed out (120s)")
