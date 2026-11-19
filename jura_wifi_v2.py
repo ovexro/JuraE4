@@ -173,7 +173,7 @@ class MachineStatistics:
     espresso_count: int = 0
     coffee_count: int = 0
     hotwater_count: int = 0
-    # Maintenance percentages (0-100, -1 = not applicable)
+    # Maintenance wear (0 = just serviced, 100 = service due, -1 = not applicable)
     cleaning_pct: int = -1
     descaling_pct: int = -1
     filter_pct: int = -1
@@ -638,29 +638,25 @@ class WiFiV2Manager(QObject):
     def _parse_status_v2(hex_data: str) -> list:
         """Parse @tg:C0 response as fallback when no @TF is available.
 
-        3 bytes after C0: Cleaning %, Filter %, Descaling %.
-        Also surfaces maintenance warnings when percentages are low.
+        3 bytes after C0: Cleaning, Filter, Descaling -- each is WEAR toward
+        the next service (0 = just serviced, 100 = due, 255 = not
+        applicable), the same values the Statistics screen shows. The
+        machine-state byte is not part of this message, so no state is
+        guessed from it; the fallback only reports "Coffee ready" plus any
+        service that has actually come due.
         """
-        alerts = []
+        # (alert bit in jura_protocol.ALERTS, label) per payload byte
+        services = [(34, "Cleaning"), (32, "Filter"), (33, "Descaling")]
+        alerts = [(13, "Coffee ready", "success")]
         try:
-            if len(hex_data) >= 4:
+            if len(hex_data) >= 8:
                 status_bytes = bytes.fromhex(hex_data)
-                state_byte = status_bytes[1] if len(status_bytes) > 1 else 0
-                if state_byte == 0x64:
-                    alerts.append((13, "Coffee ready", "success"))
-                elif state_byte == 0x00:
-                    alerts.append((12, "Heating up", "info"))
-                else:
-                    alerts.append((17, "Please wait", "info"))
-                # Surface maintenance warnings from the same response
-                if len(status_bytes) >= 4:
-                    names = ["Cleaning", "Filter", "Descaling"]
-                    for i, name in enumerate(names):
-                        pct = status_bytes[i + 1]
-                        if pct != 255 and pct <= 15:
-                            alerts.append((33 + i, f"{name} due", "warning"))
+                for i, (bit, name) in enumerate(services):
+                    pct = status_bytes[i + 1]
+                    if pct != 255 and pct >= 100:
+                        alerts.append((bit, f"{name} due", "warning"))
         except (ValueError, IndexError):
-            alerts = [(13, "Coffee ready", "success")]
+            pass
         return alerts
 
     # ======================================================================

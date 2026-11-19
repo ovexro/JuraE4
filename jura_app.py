@@ -1365,18 +1365,36 @@ class MaintenanceBar(QWidget):
                 border-radius: 5px;
             """)
         else:
-            color = GREEN if pct > 50 else (AMBER if pct > 20 else RED)
-            self._pct_label.setText(f"{pct}%")
+            # The machine reports WEAR toward the next service, not what is
+            # left: 0% = just cleaned/descaled, 100% = service due (the
+            # "Cleaning alert" status bit is raised at 100%). Verified against
+            # the log: clean=100% with the alert active on 2026-08-31, and
+            # clean=0%/descale=0% with no alert the day after a full service.
+            due = pct >= 100
+            color = RED if due else (AMBER if pct >= 75 else GREEN)
+            self._pct_label.setText(f"{pct}% — due" if due else f"{pct}%")
             self._pct_label.setStyleSheet(f"color: {color}; border: none;")
             self._count_label.setText(f"{count} cycle{'s' if count != 1 else ''}")
-            self._bar.setStyleSheet(f"""
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {color}, stop:{max(pct / 100, 0.01)} {color},
-                    stop:{min(pct / 100 + 0.005, 1)} {BORDER}, stop:1 {BORDER}
-                );
-                border-radius: 5px;
-            """)
+            # Gradient stops must be non-decreasing: at low pct the old
+            # `max(pct/100, 0.01)` fill stop landed AFTER the `pct/100 + 0.005`
+            # border stop, which Qt renders as a smeared, nearly full bar.
+            fill = min(max(pct / 100, 0.02), 1.0)
+            if fill >= 0.999:
+                # Full bar: duplicate stops at 1.0 collapse in Qt and fade the
+                # fill toward the track colour, so use a solid colour instead.
+                self._bar.setStyleSheet(f"""
+                    background-color: {color};
+                    border-radius: 5px;
+                """)
+            else:
+                self._bar.setStyleSheet(f"""
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {color}, stop:{fill:.3f} {color},
+                        stop:{fill + 0.001:.3f} {BORDER}, stop:1 {BORDER}
+                    );
+                    border-radius: 5px;
+                """)
 
     def paintEvent(self, event):
         super().paintEvent(event)
