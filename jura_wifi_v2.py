@@ -9,7 +9,9 @@ handling all machine-level encryption internally.
 """
 
 import random
+import re
 import socket
+import subprocess
 import threading
 import time
 import logging
@@ -336,46 +338,83 @@ class WiFiV2Manager(QObject):
 
     # -- UDP Discovery --
 
+    _DISCOVERY_PROBE = bytes.fromhex("0010a5f3") + b"\x00" * 12
+
     @staticmethod
-    def _udp_discover(timeout: float = 3.0) -> List[WiFiV2DeviceInfo]:
-        """Send a UDP discovery probe to the known dongle IP and collect the
-        reply. Unicast only (it works across routed subnets); there is no
-        broadcast probe."""
-        results = []
-        probe = bytes.fromhex("0010a5f3") + b"\x00" * 12
+    def _parse_discovery_reply(data: bytes, addr, port: int = DONGLE_PORT) -> Optional[WiFiV2DeviceInfo]:
+        """Turn one UDP discovery reply into a device, or None if it isn't one."""
+        if len(data) < 117 or data[2:4] != b"\xa5\xf3":
+            return None
+        text = lambda lo, hi: data[lo:hi].split(b"\x00")[0].decode("ascii", errors="replace")
+        return WiFiV2DeviceInfo(
+            ip=addr[0],
+            port=port,
+            name=text(20, 52) or "WiFi Connect V2",
+            firmware=text(4, 20),
+            machine_type=text(52, 68),
+            mac=":".join(f"{b:02x}" for b in data[103:109]),   # offset 103 verified on a real dongle reply
+        )
 
-        # Probe known IPs via unicast (works across routed subnets)
-        probe_targets = [DEFAULT_DONGLE_IP]
+    @staticmethod
+    def _parse_broadcast_addresses(ip_addr_output: str) -> List[str]:
+        """Directed-broadcast addresses from `ip -4 -o addr show` output
+        (`... inet 192.168.1.20/24 brd 192.168.1.255 scope global ...`)."""
+        return re.findall(r"\bbrd (\d{1,3}(?:\.\d{1,3}){3})\b", ip_addr_output)
 
-        for target_ip in probe_targets:
-            s = None
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(timeout)
-                s.sendto(probe, (target_ip, DONGLE_PORT))
-                data, addr = s.recvfrom(256)
-                if len(data) >= 117 and data[2:4] == b"\xa5\xf3":
-                    firmware = data[4:20].split(b"\x00")[0].decode("ascii", errors="replace")
-                    ssid = data[20:52].split(b"\x00")[0].decode("ascii", errors="replace")
-                    machine = data[52:68].split(b"\x00")[0].decode("ascii", errors="replace")
-                    mac_bytes = data[104:110]
-                    mac = ":".join(f"{b:02x}" for b in mac_bytes)
-                    results.append(WiFiV2DeviceInfo(
-                        ip=addr[0],
-                        port=DONGLE_PORT,
-                        name=ssid or "WiFi Connect V2",
-                        firmware=firmware,
-                        machine_type=machine,
-                        mac=mac,
-                    ))
-            except socket.timeout:
-                pass
-            except Exception as e:
-                logger.debug("V2 UDP probe to %s failed: %s", target_ip, e)
-            finally:
-                if s is not None:
-                    s.close()  # was leaked on timeout/error
+    @staticmethod
+    def _broadcast_targets() -> List[str]:
+        """The limited broadcast address plus each local interface's own
+        broadcast address (some routers/APs drop 255.255.255.255)."""
+        targets = ["255.255.255.255"]
+        try:
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show"],
+                                 capture_output=True, text=True, timeout=2).stdout
+            for brd in WiFiV2Manager._parse_broadcast_addresses(out):
+                if brd not in targets:
+                    targets.append(brd)
+        except Exception as e:      # no `ip` (non-Linux) -- the limited broadcast still works
+            logger.debug("V2 discovery: could not list interfaces: %s", e)
+        return targets
 
+    @staticmethod
+    def _udp_discover(timeout: float = 3.0, targets: Optional[List[str]] = None,
+                      port: int = DONGLE_PORT) -> List[WiFiV2DeviceInfo]:
+        """Find dongles on the network: send the discovery probe to the known
+        dongle IP (works across routed subnets) AND by broadcast, then collect
+        every reply. Returns as soon as the replies stop (0.6 s after the first
+        one), or after `timeout` seconds if nothing answers."""
+        if targets is None:
+            targets = [DEFAULT_DONGLE_IP] + WiFiV2Manager._broadcast_targets()
+        results: List[WiFiV2DeviceInfo] = []
+        seen = set()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            for target in targets:
+                try:
+                    s.sendto(WiFiV2Manager._DISCOVERY_PROBE, (target, port))
+                except OSError as e:
+                    logger.debug("V2 UDP probe to %s failed: %s", target, e)
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                s.settimeout(remaining)
+                try:
+                    data, addr = s.recvfrom(512)
+                except socket.timeout:
+                    break
+                except OSError as e:
+                    logger.debug("V2 UDP receive failed: %s", e)
+                    break
+                dev = WiFiV2Manager._parse_discovery_reply(data, addr, port)
+                if dev and (dev.ip, dev.mac) not in seen:
+                    seen.add((dev.ip, dev.mac))
+                    results.append(dev)
+                    deadline = min(deadline, time.monotonic() + 0.6)   # others reply within ms
+        finally:
+            s.close()
         return results
 
     # -- Public API --
@@ -475,21 +514,6 @@ class WiFiV2Manager(QObject):
                     firmware=d.firmware,
                     machine_type=d.machine_type,
                     mac=d.mac,
-                ))
-
-            # If UDP found nothing, offer default dongle IP
-            # (UDP discovery may not work across routed subnets; TCP
-            # probe is avoided because the dongle has a single-connection
-            # limit and the probe would block the subsequent real connect)
-            if not gui_results:
-                logger.info("V2 scan: UDP found nothing, offering default IP")
-                gui_results.append(WiFiV2DeviceInfo(
-                    ip=DEFAULT_DONGLE_IP,
-                    port=DONGLE_PORT,
-                    name="WiFi Connect V2",
-                    firmware="TT237W",
-                    machine_type="JURA E4",
-                    mac="",
                 ))
 
             logger.info("V2 scan: found %d device(s)", len(gui_results))

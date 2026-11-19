@@ -2106,6 +2106,7 @@ class JuraApp(QMainWindow):
         self._reconnect_attempts = 0
         self._tried_scan = False
         self._last_alerts = None  # latest status poll; None until the first one
+        self._last_connect_error = None  # why the last initial connect failed (shown if the scan finds nothing)
         self._offline_by_user = False  # user pressed Disconnect: no auto (re)connects
         self._notified_bits = set()    # notable alerts already announced (cleared when they go away)
         self._lost_notified = False    # "lost connection" was announced -> announce "back online"
@@ -2375,11 +2376,16 @@ class JuraApp(QMainWindow):
             self._conn_screen.start_animation("Connecting")
             self._wifi.connect_machine(dev.ip, dev.port)
         else:
-            self._conn_screen.show_fallback(
+            text = (
                 "No JURA machine found on the network.\n"
                 "Make sure the WiFi Connect dongle is plugged in\n"
-                "and the machine is powered on.",
-                DEFAULT_DONGLE_IP,
+                "and the machine is powered on."
+            )
+            err = self._last_connect_error
+            if err:
+                text += f"\n\nLast connection attempt: {err}"
+            self._conn_screen.show_fallback(
+                text, self._settings.get("dongle_ip", DEFAULT_DONGLE_IP)
             )
 
     def _on_manual_connect(self, ip, port):
@@ -2431,8 +2437,11 @@ class JuraApp(QMainWindow):
             self._reconnect_timer.start(delay)
             return
 
-        # During initial connect — try scan as fallback
+        # During initial connect — try scan as fallback (remember why this
+        # attempt failed: it is the most useful thing to show if the scan
+        # finds nothing either, e.g. the "Close J.O.E. first" hint)
         if not self._tried_scan:
+            self._last_connect_error = msg
             self._tried_scan = True
             self._conn_screen.start_animation("Discovering machine")
             self._wifi.scan()
