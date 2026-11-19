@@ -1821,9 +1821,12 @@ class DashboardScreen(QWidget):
         self._conn_label.setText("Disconnected")
         self._conn_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
 
-    def set_reconnecting(self):
+    def set_reconnecting(self, attempt=0):
         self._led.set_warning()
-        self._conn_label.setText("Reconnecting...")
+        self._conn_label.setText(
+            "Reconnecting..." if attempt < 3
+            else f"Machine unreachable \u2014 retrying (#{attempt})"
+        )
         self._conn_label.setStyleSheet(f"color: {AMBER}; background: transparent; border: none;")
 
     def update_alerts(self, alerts):
@@ -1949,8 +1952,10 @@ class Settings:
 # Main Window
 # ---------------------------------------------------------------------------
 
-MAX_RECONNECT_ATTEMPTS = 5
-RECONNECT_DELAY_MS = 5000
+# Auto-reconnect never gives up (the machine may simply be switched off or
+# auto-off'd for hours; when it comes back the app should be live again with
+# no click). Pauses grow, then repeat at the last value.
+RECONNECT_DELAYS_MS = (2000, 5000, 10000, 20000, 30000)
 
 
 class JuraApp(QMainWindow):
@@ -1968,6 +1973,7 @@ class JuraApp(QMainWindow):
         self._reconnect_attempts = 0
         self._tried_scan = False
         self._last_alerts = None  # latest status poll; None until the first one
+        self._offline_by_user = False  # user pressed Disconnect: no auto (re)connects
 
         # Apply saved auth hash (overrides the module default)
         saved_hash = self._settings.get("auth_hash")
@@ -2168,6 +2174,7 @@ class JuraApp(QMainWindow):
 
     def _auto_connect(self):
         """Try saved IP first, fall back to UDP discovery."""
+        self._offline_by_user = False
         self._tried_scan = False
         saved_ip = self._settings.get("dongle_ip")
         if saved_ip:
@@ -2178,6 +2185,8 @@ class JuraApp(QMainWindow):
             self._wifi.scan()
 
     def _on_scan_finished(self, devices):
+        if self._offline_by_user:
+            return
         if devices:
             dev = devices[0]
             self._conn_screen.start_animation("Connecting")
@@ -2191,9 +2200,11 @@ class JuraApp(QMainWindow):
             )
 
     def _on_manual_connect(self, ip, port):
+        self._offline_by_user = False
         self._wifi.connect_machine(ip, port)
 
     def _on_retry(self):
+        self._offline_by_user = False
         self._conn_screen.start_animation("Discovering machine")
         self._wifi.scan()
 
@@ -2202,6 +2213,12 @@ class JuraApp(QMainWindow):
     # ======================================================================
 
     def _on_connected(self, info):
+        if self._offline_by_user:
+            # A connect that was already in flight finished after the user
+            # pressed Disconnect -- honour the Disconnect.
+            self._user_disconnect = True
+            self._wifi.disconnect_machine()
+            return
         self._reconnecting = False
         self._reconnect_attempts = 0
         self._conn_screen.stop_animation()
@@ -2220,16 +2237,11 @@ class JuraApp(QMainWindow):
         # During reconnect — retry after delay
         if self._reconnecting:
             self._reconnect_attempts += 1
-            if self._reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
-                self._reconnecting = False
-                self._dashboard.set_disconnected()
-                self._stack.setCurrentWidget(self._conn_screen)
-                self._conn_screen.show_fallback(
-                    "Connection lost — could not reconnect.",
-                    self._settings.get("dongle_ip", DEFAULT_DONGLE_IP),
-                )
-            else:
-                self._reconnect_timer.start(RECONNECT_DELAY_MS)
+            delay = RECONNECT_DELAYS_MS[
+                min(self._reconnect_attempts - 1, len(RECONNECT_DELAYS_MS) - 1)
+            ]
+            self._dashboard.set_reconnecting(self._reconnect_attempts)
+            self._reconnect_timer.start(delay)
             return
 
         # During initial connect — try scan as fallback
@@ -2270,6 +2282,8 @@ class JuraApp(QMainWindow):
         self._try_reconnect()
 
     def _try_reconnect(self):
+        if self._offline_by_user or not self._reconnecting:
+            return
         ip = self._settings.get("dongle_ip", DEFAULT_DONGLE_IP)
         self._wifi.connect_machine(ip)
 
@@ -2279,9 +2293,16 @@ class JuraApp(QMainWindow):
 
     def _on_disconnect(self):
         self._user_disconnect = True
+        self._offline_by_user = True
         self._reconnecting = False
         self._reconnect_timer.stop()
+        was_connected = self._wifi.is_connected
         self._wifi.disconnect_machine()
+        if not was_connected:
+            # Pressed while reconnecting: there is no live link to tear down,
+            # so the backend emits no `disconnected` signal -- finish the UI
+            # transition here (the button used to do nothing in that state).
+            self._on_disconnected()
 
     def _on_brew(self, code, strength, vol_ml, step, temp):
         if self._wifi.is_brewing:
