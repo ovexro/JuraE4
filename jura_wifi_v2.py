@@ -634,6 +634,12 @@ class WiFiV2Manager(QObject):
                         if tg is not None:
                             alerts = self._parse_status_v2(tg[4:])
                     if alerts is not None:
+                        if self._filter_not_applicable(resps):
+                            # Bit 32 ("Filter alert") was set in every one of
+                            # ~650 logged @TF polls while @tg:C0 reported the
+                            # filter as N/A (0xFF) -- a permanent false
+                            # warning on a machine with no filter system.
+                            alerts = [a for a in alerts if a[0] != 32]
                         self.status_update.emit(alerts)
                         fail_count = 0
                     else:
@@ -650,6 +656,17 @@ class WiFiV2Manager(QObject):
                 fail_count += 1
 
             self._stop_event.wait(STATUS_POLL_INTERVAL)
+
+    @staticmethod
+    def _filter_not_applicable(resps: List[str]) -> bool:
+        """True if the @tg:C0 reply in `resps` reports the filter as N/A."""
+        for r in resps:
+            if r.startswith("@tg:C0"):
+                try:
+                    return bytes.fromhex(r[6:12])[1] == 0xFF
+                except (ValueError, IndexError):
+                    return False
+        return False
 
     @staticmethod
     def _parse_tf_bitmask(hex_data: str):
