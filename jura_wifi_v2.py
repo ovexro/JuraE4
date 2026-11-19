@@ -641,6 +641,15 @@ class WiFiV2Manager(QObject):
 
             try:
                 resps = self._send_recv("@TG:C0", expect="@tg:C0")
+                if "@TS" in resps:
+                    # Unsolicited @TS (upper case; our own @TS:01 is answered
+                    # with a lower-case @ts) = the dongle ended the session --
+                    # seen right after the machine's auto-off rinse
+                    # (@TV:23228F..0F) in jura.log. Nothing more will be
+                    # answered, so reconnect now instead of timing out.
+                    logger.warning("V2 status: session ended by dongle (@TS), disconnecting")
+                    self._do_disconnect()
+                    return
                 if resps:
                     # The dongle sends @TF twice per poll (see jura.log), so
                     # collect first and emit ONE update -- not one per @TF,
@@ -914,27 +923,42 @@ class WiFiV2Manager(QObject):
                 logger.info("V2 brew: acknowledged, listening for live progress")
 
                 completed = False
+                session_ended = False
                 for r in resps:
-                    if self._process_brew_push(r):
+                    if r == "@TS":
+                        session_ended = True
+                    elif self._process_brew_push(r):
                         completed = True
 
                 # Listen for further @TB/@TV push messages (real-time
                 # progress from the dongle).
                 deadline = time.monotonic() + 120  # 120s safety timeout
-                while not completed and self._brewing and time.monotonic() < deadline:
+                while (not completed and not session_ended and self._brewing
+                       and time.monotonic() < deadline):
                     if self._stop_event.is_set():
                         break
                     resps = self._recv_all(timeout=2)
                     for r in resps:
+                        if r == "@TS":
+                            session_ended = True
+                            break
                         if self._process_brew_push(r):
                             completed = True
                             break
 
-                if not completed and self._brewing and not self._stop_event.is_set():
+                if (not completed and not session_ended and self._brewing
+                        and not self._stop_event.is_set()):
                     logger.warning("V2 brew: no completion signal within 120s safety timeout")
                     self.brew_error.emit("Brew did not report completion within 120s")
 
             self._end_brew(acked)
+            if session_ended and not completed:
+                # The dongle closed the session mid-brew (e.g. machine
+                # switched off): report it now rather than after the 120 s
+                # timeout, and drop to the reconnect path.
+                logger.warning("V2 brew: session ended by dongle (@TS) before completion")
+                self.brew_error.emit("Machine session ended during the brew")
+                self._do_disconnect()
 
         except Exception as e:
             self._end_brew(acked)
