@@ -1574,6 +1574,14 @@ class StatisticsScreen(QWidget):
         self._load_dots = 0
         self._load_timer.start(400)
 
+    def show_message(self, text, color=None):
+        """Replace the loading spinner with a plain message (e.g. why a
+        refresh could not run) and re-enable Refresh."""
+        self._load_timer.stop()
+        self._refresh_btn.setEnabled(True)
+        self._status_label.setText(text)
+        self._status_label.setStyleSheet(f"color: {color or AMBER}; border: none;")
+
     def _animate_loading(self):
         self._load_dots = (self._load_dots + 1) % 4
         self._status_label.setText("Loading statistics" + "." * self._load_dots)
@@ -2352,7 +2360,21 @@ class JuraApp(QMainWindow):
     # Statistics
     # ======================================================================
 
+    def _stats_unavailable_reason(self):
+        """Why statistics can't be read right now, or None. The backend
+        silently no-ops while brewing/disconnected, which used to leave the
+        screen on "Loading statistics..." forever."""
+        if self._wifi.is_brewing:
+            return "Cannot read statistics while brewing"
+        if not self._wifi.is_connected:
+            return "Not connected to the machine"
+        return None
+
     def _on_show_stats(self):
+        reason = self._stats_unavailable_reason()
+        if reason:
+            self._dashboard.show_error(reason)
+            return
         self._stats_screen.show_loading()
         self._stack.setCurrentWidget(self._stats_screen)
         self._wifi.read_statistics()
@@ -2361,6 +2383,10 @@ class JuraApp(QMainWindow):
         self._stack.setCurrentWidget(self._dashboard)
 
     def _on_stats_refresh(self):
+        reason = self._stats_unavailable_reason()
+        if reason:
+            self._stats_screen.show_message(reason)
+            return
         self._stats_screen.show_loading()
         self._wifi.read_statistics()
 
