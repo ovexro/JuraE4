@@ -1618,6 +1618,7 @@ class DashboardScreen(QWidget):
         self._cards = []
         self._alert_pills = []
         self._brewing_card_idx = None  # index of the card currently brewing
+        self._pending_brew_code = None  # product the user confirmed, awaiting the machine's ack
 
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
@@ -1775,15 +1776,28 @@ class DashboardScreen(QWidget):
             self.mapToGlobal(self.rect().center()) - dlg.rect().center()
         )
         if dlg.exec_() == QDialog.Accepted:
+            # Lock first, then emit: a rejection (cooldown, not connected,
+            # alert pre-check) fires on_brew_error synchronously from inside
+            # the emit and unlocks everything -- nothing left to undo after.
+            # The animation itself starts in on_brew_started(), i.e. only once
+            # the machine has actually acknowledged the brew.
+            self.begin_brew_request(code)
             self.brew_requested.emit(code, strength, vol_ml, step, temp)
-            # Animate ONLY the card being brewed; lock the others
-            self._brewing_card_idx = None
-            for i, card in enumerate(self._cards):
-                if card._product.code == code:
-                    card.set_brewing(True)
-                    self._brewing_card_idx = i
-                else:
-                    card.set_brew_locked(True)
+
+    def begin_brew_request(self, code):
+        """User confirmed a brew: lock every BREW button at once (no
+        double-submit while waiting for the machine) and remember which card
+        to animate when the machine accepts."""
+        self._pending_brew_code = code
+        self._brewing_card_idx = None
+        for card in self._cards:
+            card.set_brew_locked(True)
+        self._show_toast("Sending to machine\u2026", AMBER)
+
+    def show_error(self, msg):
+        """Toast an error WITHOUT touching card state (use when a brew is
+        legitimately still running, so its animation must not be reset)."""
+        self._show_toast(msg, RED)
 
     def set_machine_info(self, info):
         short = info[:40] if len(info) > 40 else info
@@ -1820,6 +1834,14 @@ class DashboardScreen(QWidget):
                 self._alert_layout.insertWidget(self._alert_layout.count() - 1, pill)
 
     def on_brew_started(self):
+        """The machine acknowledged the brew: animate ONLY the requested card
+        (the others stay locked)."""
+        code, self._pending_brew_code = self._pending_brew_code, None
+        self._brewing_card_idx = None
+        for i, card in enumerate(self._cards):
+            if code is not None and card._product.code == code:
+                card.set_brewing(True)
+                self._brewing_card_idx = i
         self._show_toast("Brewing started!", GREEN)
 
     def on_brew_progress(self, percent, temperature):
@@ -1830,6 +1852,7 @@ class DashboardScreen(QWidget):
 
     def on_brew_error(self, msg):
         self._show_toast(f"Brew failed: {msg}", RED)
+        self._pending_brew_code = None
         self._brewing_card_idx = None
         for card in self._cards:
             card.set_brewing(False)
@@ -1837,6 +1860,7 @@ class DashboardScreen(QWidget):
 
     def on_brew_status_clear(self):
         """Safety clear — resets all cards (idempotent with _on_brew_anim_finished)."""
+        self._pending_brew_code = None
         self._brewing_card_idx = None
         for card in self._cards:
             card.set_brewing(False)
@@ -2108,18 +2132,11 @@ class JuraApp(QMainWindow):
         volume = saved.get("volume", product.volume_default)
         temp = saved.get("temperature", product.temp_default)
         # Show confirmation dialog (safety — don't brew without user seeing it)
-        from jura_app import BrewConfirmDialog
         dlg = BrewConfirmDialog(product.name, strength, volume, temp, self)
         dlg.move(self.mapToGlobal(self.rect().center()) - dlg.rect().center())
         if dlg.exec_() == QDialog.Accepted:
+            self._dashboard.begin_brew_request(product_code)
             self._on_brew(product_code, strength, volume, product.volume_step, temp)
-            self._dashboard._brewing_card_idx = None
-            for i, card in enumerate(self._dashboard._cards):
-                if card._product.code == product_code:
-                    card.set_brewing(True)
-                    self._dashboard._brewing_card_idx = i
-                else:
-                    card.set_brew_locked(True)
 
     def _tray_quit(self):
         self._quitting = True
@@ -2258,7 +2275,8 @@ class JuraApp(QMainWindow):
 
     def _on_brew(self, code, strength, vol_ml, step, temp):
         if self._wifi.is_brewing:
-            self._dashboard.on_brew_error("A brew is already in progress")
+            # Toast only: on_brew_error would reset the running brew's card.
+            self._dashboard.show_error("A brew is already in progress")
             return
         self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
         # Save preferences
