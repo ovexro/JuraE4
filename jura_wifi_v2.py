@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_DONGLE_IP = "192.168.1.105"
 DONGLE_PORT = 51515
 TCP_TIMEOUT = 5
+CONNECT_ATTEMPTS = 4        # refused connects: 1 try + 3 retries ...
+CONNECT_RETRY_DELAY = 2.0   # ... 2 s apart (~6 s worst case before reporting 'refused')
 RECV_BUF = 4096
 # After the awaited reply has arrived, keep listening this long for messages
 # the dongle bundles with it (measured from jura.log: duplicates and pushes
@@ -518,11 +520,29 @@ class WiFiV2Manager(QObject):
             if self._brew_thread and self._brew_thread is not current and self._brew_thread.is_alive():
                 self._brew_thread.join(timeout=3)
 
-            # TCP connect
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(TCP_TIMEOUT)
-            self._tune_socket(sock)
-            sock.connect((ip, port))
+            # TCP connect. The dongle serves ONE connection and frees its slot
+            # slowly: right after a Disconnect or an app restart it refuses
+            # for a few seconds (measured on the real dongle: refused 1.5 s
+            # after a clean disconnect, accepted ~5 s later -- same with the
+            # original code). Retry refusals briefly so that doesn't surface as
+            # a bogus "Close J.O.E. first"; other errors fail at once.
+            for attempt in range(CONNECT_ATTEMPTS):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(TCP_TIMEOUT)
+                self._tune_socket(sock)
+                try:
+                    sock.connect((ip, port))
+                    break
+                except ConnectionRefusedError:
+                    sock.close()
+                    if attempt == CONNECT_ATTEMPTS - 1:
+                        raise
+                    logger.info("V2 connect refused (attempt %d/%d), retrying in %.1fs",
+                                attempt + 1, CONNECT_ATTEMPTS, CONNECT_RETRY_DELAY)
+                    time.sleep(CONNECT_RETRY_DELAY)
+                except BaseException:
+                    sock.close()
+                    raise
             self._sock = sock
             self._recv_buf = b""
 
