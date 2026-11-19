@@ -621,20 +621,20 @@ class WiFiV2Manager(QObject):
             try:
                 resps = self._send_recv("@TG:C0", expect="@tg:C0")
                 if resps:
-                    status_parsed = False
+                    # The dongle sends @TF twice per poll (see jura.log), so
+                    # collect first and emit ONE update -- not one per @TF,
+                    # which made the GUI rebuild its alert pills twice a poll.
+                    # The full @TF bitmask wins; @tg:C0 is only the fallback.
+                    alerts = None
                     for r in resps:
-                        if r.startswith("@TF:") or r.startswith("@tf:"):
-                            # Full status bitmask (same as BLE MACHINE_STATUS)
+                        if alerts is None and r[:4].upper() == "@TF:":
                             alerts = self._parse_tf_bitmask(r[4:])
-                            if alerts is not None:
-                                self.status_update.emit(alerts)
-                                status_parsed = True
-                        elif r.startswith("@tg:C0"):
-                            if not status_parsed:
-                                alerts = self._parse_status_v2(r[4:])
-                                self.status_update.emit(alerts)
-                                status_parsed = True
-                    if status_parsed:
+                    if alerts is None:
+                        tg = next((r for r in resps if r.startswith("@tg:C0")), None)
+                        if tg is not None:
+                            alerts = self._parse_status_v2(tg[4:])
+                    if alerts is not None:
+                        self.status_update.emit(alerts)
                         fail_count = 0
                     else:
                         fail_count += 1
