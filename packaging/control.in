@@ -1,0 +1,16 @@
+Package: jura-desktop
+Version: __VERSION__
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.8), python3-pyqt5, python3-bleak
+Recommends: python3-scapy
+Maintainer: Ovidiu <noreply@example.invalid>
+Homepage: https://github.com/ovexro/JuraE4
+Description: Desktop control app for the JURA E4 coffee machine
+ A desktop app for controlling a JURA E4 coffee machine over the WiFi
+ Connect V2 dongle: brewing, live progress, statistics and maintenance,
+ desktop notifications, and auto-reconnect.
+ .
+ This is an independent, unofficial project, not affiliated with JURA
+ Elektroapparate AG. See /opt/jura-desktop/README.md for details.

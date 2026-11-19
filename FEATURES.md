@@ -77,6 +77,7 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] "Start at login" tray toggle -> ~/.config/autostart entry running `run.sh --minimized`; `--minimized` only honoured when a tray exists
 
 ## Install & First Run (2026-11-19) — COMPLETE
+- [x] `.deb` package (`packaging/build-deb.sh`): /opt/jura-desktop + /usr/bin/jura-desktop, menu entry, hicolor icons, Depends on python3-pyqt5/python3-bleak, Recommends python3-scapy. tests/deb_package_test.py (19 checks: metadata, layout, runs from /opt). Not yet `apt install`-ed for real, and not tried on Ubuntu/Debian.
 - [x] `install.sh` one-command installer (curl | bash): apt/dnf/pacman prerequisites only if missing, clone to ~/.local/share/jura-desktop, venv + pinned requirements, menu entry + `jura-desktop` command; idempotent update; `uninstall.sh` (settings kept unless --purge). Verified from GitHub into a fresh HOME
 - [x] Dongle discovery by UDP broadcast (+ known IP): several dongles listed; empty scan keeps the real connect error and pre-fills the saved IP; MAC offset fixed (verified on the real dongle)
 - [x] First-launch setup guide (4 numbered steps, PCAPdroid on the phone, copy buttons for the extractor commands, help links)

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=JURA Desktop Control
+Comment=Control your JURA E4 coffee machine
+Exec=/usr/bin/jura-desktop
+Icon=jura-desktop
+Terminal=false
+Categories=Utility;
+StartupWMClass=jura_app

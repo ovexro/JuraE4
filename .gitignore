@@ -16,3 +16,6 @@ captures/*.pcap
 # OS
 .DS_Store
 *~
+
+# Built packages (produced by packaging/build-deb.sh, not source)
+dist/

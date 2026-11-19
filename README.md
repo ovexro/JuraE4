@@ -87,7 +87,17 @@ The pictures are rendered from the app's own widgets with sample data (no machin
 
 ## Installation
 
-### One command (Linux Mint, Ubuntu, Debian — best-effort on Fedora and Arch)
+### .deb package (Linux Mint, Ubuntu, Debian)
+
+Download the latest `jura-desktop_<version>_all.deb` from [Releases](https://github.com/ovexro/JuraE4/releases), then:
+
+```bash
+sudo apt install ./jura-desktop_1.0.0_all.deb
+```
+
+`apt` pulls in `python3-pyqt5` and `python3-bleak` for you. Remove it with `sudo apt remove jura-desktop` (keeps your settings). To build it yourself instead of downloading, see `packaging/README.md`.
+
+### One command, any distro (installs its own Python environment)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ovexro/JuraE4/main/install.sh | bash

@@ -29,6 +29,7 @@ python3 tests/edge_test.py    # or one file; each line is PASS/FAIL
 | `notify_test.py` | alert transitions, brew ready/failed, lost/back online, toggle |
 | `discovery_test.py` | UDP discovery: reply parsing, broadcast targets, several dongles, no answer, scan-fallback text |
 | `setup_test.py` | first-launch guide: key validation, Copy buttons, help links |
+| `deb_package_test.py` | builds the .deb, checks metadata/layout, runs it from /opt (needs dpkg-deb + fakeroot) |
 | `single_instance_test.py` | lock + "show" socket (also two real processes, stale lock), autostart entry |
 
 Tests never talk to a real dongle and never contain the auth hash (the module's
