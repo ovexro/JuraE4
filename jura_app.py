@@ -2444,7 +2444,7 @@ class JuraApp(QMainWindow):
         self._reconnect_timer.stop()
         if self._tray:
             self._tray.hide()
-        self._wifi.disconnect_and_wait(timeout=3)
+        self._wifi.disconnect_and_wait()
         self._wifi.shutdown()
         event.accept()
 

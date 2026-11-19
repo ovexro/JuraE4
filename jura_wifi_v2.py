@@ -336,11 +336,9 @@ class WiFiV2Manager(QObject):
 
     @staticmethod
     def _udp_discover(timeout: float = 3.0) -> List[WiFiV2DeviceInfo]:
-        """Send UDP discovery probe and collect V2 dongle responses.
-
-        Uses direct unicast to known IP (works across subnets) plus
-        broadcast on the local network.
-        """
+        """Send a UDP discovery probe to the known dongle IP and collect the
+        reply. Unicast only (it works across routed subnets); there is no
+        broadcast probe."""
         results = []
         probe = bytes.fromhex("0010a5f3") + b"\x00" * 12
 
@@ -348,12 +346,12 @@ class WiFiV2Manager(QObject):
         probe_targets = [DEFAULT_DONGLE_IP]
 
         for target_ip in probe_targets:
+            s = None
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.settimeout(timeout)
                 s.sendto(probe, (target_ip, DONGLE_PORT))
                 data, addr = s.recvfrom(256)
-                s.close()
                 if len(data) >= 117 and data[2:4] == b"\xa5\xf3":
                     firmware = data[4:20].split(b"\x00")[0].decode("ascii", errors="replace")
                     ssid = data[20:52].split(b"\x00")[0].decode("ascii", errors="replace")
@@ -372,6 +370,9 @@ class WiFiV2Manager(QObject):
                 pass
             except Exception as e:
                 logger.debug("V2 UDP probe to %s failed: %s", target_ip, e)
+            finally:
+                if s is not None:
+                    s.close()  # was leaked on timeout/error
 
         return results
 
@@ -381,10 +382,15 @@ class WiFiV2Manager(QObject):
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def connect_machine(self, ip: str, port: int = DONGLE_PORT):
-        threading.Thread(target=self._do_connect, args=(ip,), daemon=True).start()
+        threading.Thread(target=self._do_connect, args=(ip, port), daemon=True).start()
 
     def disconnect_machine(self):
-        self._do_disconnect()
+        """Disconnect without blocking the caller. The teardown joins worker
+        threads (up to 3 s each) and waits for the socket lock, which froze the
+        GUI on every Disconnect click; `disconnected` is emitted from the
+        worker thread (Qt queues it to the GUI). Use `disconnect_and_wait` /
+        `shutdown` when the process is about to exit."""
+        threading.Thread(target=self._do_disconnect, daemon=True).start()
 
     def brew(self, product_code, strength, volume_ml, volume_step, temperature):
         with self._lock:
@@ -434,7 +440,8 @@ class WiFiV2Manager(QObject):
             return None
         return resps[0] if resps else None
 
-    def disconnect_and_wait(self, timeout=3):
+    def disconnect_and_wait(self):
+        """Blocking disconnect, for application exit."""
         self._do_disconnect()
 
     def shutdown(self):
@@ -486,10 +493,10 @@ class WiFiV2Manager(QObject):
     # Connection
     # ======================================================================
 
-    def _do_connect(self, ip: str):
+    def _do_connect(self, ip: str, port: int = DONGLE_PORT):
         try:
             self._dongle_ip = ip
-            logger.info("V2 connect: %s:%d", ip, DONGLE_PORT)
+            logger.info("V2 connect: %s:%d", ip, port)
 
             # A previous connection's background threads may still be
             # winding down (e.g. reconnecting right after a drop) -- join
@@ -507,7 +514,7 @@ class WiFiV2Manager(QObject):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(TCP_TIMEOUT)
             self._tune_socket(sock)
-            sock.connect((ip, DONGLE_PORT))
+            sock.connect((ip, port))
             self._sock = sock
             self._recv_buf = b""
 
@@ -558,7 +565,7 @@ class WiFiV2Manager(QObject):
         except socket.timeout:
             self._close_socket()
             self.connect_fail.emit(
-                f"Connection timeout to {ip}:{DONGLE_PORT}\n"
+                f"Connection timeout to {ip}:{port}\n"
                 "Check that the machine is powered on."
             )
         except ConnectionRefusedError:
