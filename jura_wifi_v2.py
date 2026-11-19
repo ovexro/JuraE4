@@ -217,7 +217,8 @@ class WiFiV2Manager(QObject):
         self._auth_hash = AUTH_HASH
         self._connected = False
         self._brewing = False
-        self._last_brew_time = 0.0
+        # monotonic time the last ACKNOWLEDGED brew finished (-inf = none yet)
+        self._last_brew_end = float("-inf")
         self._sock: Optional[socket.socket] = None
         self._recv_buf: bytes = b""
         self._stop_event = threading.Event()
@@ -247,6 +248,16 @@ class WiFiV2Manager(QObject):
     def _set_brewing(self, value: bool):
         with self._lock:
             self._brewing = value
+
+    def _end_brew(self, acked: bool):
+        """Release the brewing flag. If the machine had acknowledged the
+        brew, start the between-brews cooldown from now (stamp and flag
+        change are one atomic step, so brew() can't see the flag cleared
+        with a stale stamp)."""
+        with self._lock:
+            if acked:
+                self._last_brew_end = time.monotonic()
+            self._brewing = False
 
     # -- Socket helpers --
 
@@ -377,9 +388,13 @@ class WiFiV2Manager(QObject):
             if self._brewing:
                 self.brew_error.emit("A brew is already in progress")
                 return
-            now = time.monotonic()
-            if now - self._last_brew_time < BREW_COOLDOWN_SECONDS:
-                remaining = int(BREW_COOLDOWN_SECONDS - (now - self._last_brew_time))
+            # Cooldown runs from when the previous brew FINISHED. (It used to
+            # be stamped at brew start, so after a 25 s espresso it had long
+            # expired and spaced nothing -- while a start that failed
+            # immediately still blocked the retry.)
+            since_end = time.monotonic() - self._last_brew_end
+            if since_end < BREW_COOLDOWN_SECONDS:
+                remaining = max(1, int(BREW_COOLDOWN_SECONDS - since_end + 0.999))
                 self.brew_error.emit(f"Please wait {remaining}s between brews")
                 return
             # Set the flag here, atomically with the check above, instead of
@@ -387,7 +402,6 @@ class WiFiV2Manager(QObject):
             # brew() calls (e.g. tray quick-brew racing a card brew) could
             # both pass the check before either marks itself as brewing.
             self._brewing = True
-            self._last_brew_time = now
         self._brew_thread = threading.Thread(
             target=self._do_brew,
             args=(product_code, strength, volume_ml, volume_step, temperature),
@@ -806,6 +820,7 @@ class WiFiV2Manager(QObject):
             self.brew_error.emit(f"Unknown product code: {product_code:#04x}")
             return
 
+        acked = False
         try:
             # Build @TP parameter (16 bytes = 32 hex chars)
             params = bytearray(16)
@@ -847,6 +862,7 @@ class WiFiV2Manager(QObject):
                     self.brew_error.emit("Machine did not acknowledge brew command")
                     return
 
+                acked = True
                 self.brew_started.emit()
                 logger.info("V2 brew: acknowledged, listening for live progress")
 
@@ -871,10 +887,10 @@ class WiFiV2Manager(QObject):
                     logger.warning("V2 brew: no completion signal within 120s safety timeout")
                     self.brew_error.emit("Brew did not report completion within 120s")
 
-            self._set_brewing(False)
+            self._end_brew(acked)
 
         except Exception as e:
-            self._set_brewing(False)
+            self._end_brew(acked)
             self.brew_error.emit(str(e))
 
     def _process_brew_push(self, r: str) -> bool:
