@@ -25,11 +25,14 @@ A premium Linux desktop app for controlling the **JURA E4** coffee machine throu
 - **Auto-connect on launch** — tries saved IP, falls back to UDP discovery
 - **Auto-reconnect that never gives up** — after a drop it retries after 2, 5, 10, 20 and 30 s, then every 30 s, so the app is live again by itself when the machine comes back (e.g. after its auto-off); the header shows "Reconnecting..." and later "Machine unreachable — retrying (#N)". **Disconnect** works at any point, including mid-reconnect
 - **Fast failure detection** — a closed link is noticed within one poll (~4 s), a silent dongle within ~15 s, and the dongle ending the session (`@TS`, e.g. machine auto-off) immediately — also in the middle of a brew
-- **Settings persistence** — dongle IP and brew preferences saved across sessions
+- **Settings persistence** — dongle IP, brew preferences and the notifications switch saved across sessions
 - Clear error messages (e.g. "Close J.O.E. on your phone first" when the dongle is busy). The dongle frees its single connection slot slowly, so refused connects are retried for a few seconds before that message appears
 
 ### Desktop Integration
 - **System tray** — minimize to tray on close, quick-brew from the tray menu
+- **Desktop notifications** (tray menu → *Notifications*, on by default): "Machine needs attention" the moment water/beans/grounds/tray/cleaning/descaling need you (announced once, not every poll), "*Espresso* is ready" and "Brew failed" when the window isn't in front, "Lost connection" if a drop lasts 15 s and "Machine back online" afterwards
+- **Single instance** — launching the app again raises the running window (even from the tray) instead of starting a second one that would fight for the dongle's single connection
+- **Start at login** (tray menu) — creates `~/.config/autostart/jura-desktop.desktop` and starts minimized in the tray (`run.sh --minimized`)
 - Dark theme with gold accents, large high-contrast controls (usable at the 900x680 minimum window size)
 - Custom-painted SVG/PNG icons (`icon.svg`, PNGs) — point a `.desktop` file at `run.sh` for a menu launcher
 
@@ -194,6 +197,7 @@ Settings are stored in `~/.config/jura-desktop/settings.json`:
 ```json
 {
   "dongle_ip": "192.168.1.105",
+  "notifications": true,
   "product_espresso": {"strength": 2, "volume": 45, "temperature": 1},
   "product_coffee": {"strength": 2, "volume": 100, "temperature": 1},
   "product_hot water": {"volume": 220, "temperature": 1}

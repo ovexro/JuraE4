@@ -71,6 +71,11 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] Maintenance percentages interpreted correctly (wear, not remaining) + gradient rendering fix
 - [x] UI: intended typography restored (global font-size override removed), larger/higher-contrast controls
 
+## Notifications & Single Instance (2026-11-19) — COMPLETE
+- [x] Tray notifications: new notable alert (once per appearance, batched), brew ready / failed (window not in front), lost connection (after 15 s) / back online; tray toggle persisted as `notifications`
+- [x] SingleInstance: QLockFile (stale-lock safe) + local socket; a repeat launch raises the running window and exits
+- [x] "Start at login" tray toggle -> ~/.config/autostart entry running `run.sh --minimized`; `--minimized` only honoured when a tray exists
+
 ## Tools — COMPLETE
 - [x] tools/extract_hash.py — PCAP auth hash extraction
 - [x] captures/wifi_crypto.py — standalone encryption test
