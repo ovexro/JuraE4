@@ -1967,6 +1967,7 @@ class JuraApp(QMainWindow):
         self._reconnecting = False
         self._reconnect_attempts = 0
         self._tried_scan = False
+        self._last_alerts = None  # latest status poll; None until the first one
 
         # Apply saved auth hash (overrides the module default)
         saved_hash = self._settings.get("auth_hash")
@@ -2245,6 +2246,7 @@ class JuraApp(QMainWindow):
         )
 
     def _on_disconnected(self):
+        self._last_alerts = None
         self._brew_safety_timer.stop()
         self._dashboard.on_brew_status_clear()
         self._update_tray_brew_actions(False)
@@ -2286,6 +2288,10 @@ class JuraApp(QMainWindow):
             # Toast only: on_brew_error would reset the running brew's card.
             self._dashboard.show_error("A brew is already in progress")
             return
+        blockers = self._brew_blockers(code)
+        if blockers:
+            self._dashboard.on_brew_error("Fix first: " + ", ".join(blockers))
+            return
         self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
         # Save preferences
         product = next((p for p in E4_PRODUCTS if p.code == code), None)
@@ -2298,7 +2304,22 @@ class JuraApp(QMainWindow):
     # Status & brew callbacks
     # ======================================================================
 
+    # Alert bits that stop a brew from working, per product class. Checked
+    # against the latest status poll BEFORE sending @TP so the user gets the
+    # reason at once instead of a silent no-op / 120 s timeout. Hot water needs
+    # no beans or grounds container, so those bits don't block it.
+    _BREW_BLOCKERS_COFFEE = frozenset({0, 1, 2, 4, 5, 6, 10})
+    _BREW_BLOCKERS_WATER = frozenset({0, 1, 5, 6})
+
+    def _brew_blockers(self, code):
+        """Names of active alerts that would prevent brewing `code`."""
+        if not self._last_alerts:
+            return []
+        bits = self._BREW_BLOCKERS_WATER if code == 0x0D else self._BREW_BLOCKERS_COFFEE
+        return [name for bit, name, _ in self._last_alerts if bit in bits]
+
     def _on_status(self, alerts):
+        self._last_alerts = alerts
         self._dashboard.update_alerts(alerts)
         if any(bit == 31 for bit, _, _ in alerts):
             # Bit 31 ("Enjoy your coffee") is a fallback safety net for the
@@ -2313,13 +2334,6 @@ class JuraApp(QMainWindow):
             if self._dashboard._brewing_card_idx is not None and not self._wifi.is_brewing:
                 self._brew_timer.start(3000)
                 self._brew_safety_timer.stop()
-        if self._wifi.is_brewing:
-            critical_bits = {0, 1, 2, 4, 5, 6, 10}
-            for bit, name, _ in alerts:
-                if bit in critical_bits:
-                    self._dashboard.on_brew_error(f"Machine alert: {name}")
-                    self._brew_safety_timer.stop()
-                    break
 
     def _on_brew_started(self):
         self._brew_timer.stop()  # Cancel any stale brew-clear from old status polls
