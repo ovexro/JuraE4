@@ -393,24 +393,32 @@ class WiFiV2Manager(QObject):
         threading.Thread(target=self._do_disconnect, daemon=True).start()
 
     def brew(self, product_code, strength, volume_ml, volume_step, temperature):
+        reject = None
         with self._lock:
             if self._brewing:
-                self.brew_error.emit("A brew is already in progress")
-                return
-            # Cooldown runs from when the previous brew FINISHED. (It used to
-            # be stamped at brew start, so after a 25 s espresso it had long
-            # expired and spaced nothing -- while a start that failed
-            # immediately still blocked the retry.)
-            since_end = time.monotonic() - self._last_brew_end
-            if since_end < BREW_COOLDOWN_SECONDS:
-                remaining = max(1, int(BREW_COOLDOWN_SECONDS - since_end + 0.999))
-                self.brew_error.emit(f"Please wait {remaining}s between brews")
-                return
-            # Set the flag here, atomically with the check above, instead of
-            # inside the spawned thread -- otherwise two near-simultaneous
-            # brew() calls (e.g. tray quick-brew racing a card brew) could
-            # both pass the check before either marks itself as brewing.
-            self._brewing = True
+                reject = "A brew is already in progress"
+            else:
+                # Cooldown runs from when the previous brew FINISHED. (It used
+                # to be stamped at brew start, so after a 25 s espresso it had
+                # long expired and spaced nothing -- while a start that failed
+                # immediately still blocked the retry.)
+                since_end = time.monotonic() - self._last_brew_end
+                if since_end < BREW_COOLDOWN_SECONDS:
+                    remaining = max(1, int(BREW_COOLDOWN_SECONDS - since_end + 0.999))
+                    reject = f"Please wait {remaining}s between brews"
+                else:
+                    # Set the flag here, atomically with the checks above,
+                    # instead of inside the spawned thread -- otherwise two
+                    # near-simultaneous brew() calls (e.g. tray quick-brew
+                    # racing a card brew) could both pass the check before
+                    # either marks itself as brewing.
+                    self._brewing = True
+        if reject is not None:
+            # Emit with the lock RELEASED: a directly-connected slot runs
+            # synchronously on this thread and may well read is_brewing, which
+            # would self-deadlock on the non-reentrant lock.
+            self.brew_error.emit(reject)
+            return
         self._brew_thread = threading.Thread(
             target=self._do_brew,
             args=(product_code, strength, volume_ml, volume_step, temperature),
@@ -639,12 +647,20 @@ class WiFiV2Manager(QObject):
     def _status_loop(self):
         fail_count = 0
         while not self._stop_event.is_set():
+            # Snapshot the flags, then release the lock BEFORE waiting. The
+            # wait used to sit inside `with self._lock`, so during a brew this
+            # thread held the (unfair) lock almost continuously and re-took it
+            # the instant it let go -- is_brewing / brew() / _end_brew on other
+            # threads, including the GUI thread, starved for seconds or the
+            # whole brew (measured: a 60 s test never got its first answer).
             with self._lock:
-                if not self._connected:
-                    return
-                if self._brewing:
-                    self._stop_event.wait(1)
-                    continue
+                connected = self._connected
+                brewing = self._brewing
+            if not connected:
+                return
+            if brewing:
+                self._stop_event.wait(1)
+                continue
 
             try:
                 resps = self._send_recv("@TG:C0", expect="@tg:C0")
