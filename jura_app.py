@@ -37,6 +37,7 @@ GOLD_DARK    = "#957840"
 GOLD_DIMMED  = "#6e5c30"
 TEXT         = "#ede4d4"
 TEXT_DIM     = "#6e6e82"
+TEXT_MID     = "#a3a3b8"   # secondary text that must stay readable (labels, ghost buttons)
 TEXT_DARK    = "#0b0b13"
 GREEN        = "#5ec96a"
 AMBER        = "#e8a830"
@@ -59,7 +60,6 @@ QMainWindow, QWidget {{
     background-color: {BG};
     color: {TEXT};
     font-family: {FONT_FAMILY};
-    font-size: 13px;
 }}
 QScrollArea {{
     border: none;
@@ -208,8 +208,8 @@ class StrengthSelector(QWidget):
         super().__init__(parent)
         self._value = value
         self._max = max_val
-        self._dot_r = 7
-        self._gap = 7
+        self._dot_r = 10
+        self._gap = 9
         self.setFixedSize(self._max * (self._dot_r * 2 + self._gap), self._dot_r * 2 + 8)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -237,7 +237,7 @@ class StrengthSelector(QWidget):
                 p.setPen(Qt.NoPen)
             else:
                 p.setBrush(Qt.NoBrush)
-                p.setPen(QPen(QColor(BORDER), 1.8))
+                p.setPen(QPen(QColor(GOLD_DIMMED), 1.8))
             p.drawEllipse(QPointF(x, y), r, r)
         p.end()
 
@@ -261,8 +261,8 @@ class TempToggle(QWidget):
         layout.setSpacing(4)
         for label, val in [("Low", 0), ("Normal", 1), ("High", 2)]:
             btn = QPushButton(label)
-            btn.setFixedHeight(30)
-            btn.setFixedWidth(58)
+            btn.setFixedHeight(38)
+            btn.setFixedWidth(60)   # 3x60 + 2x4 gaps = 188 <= card's 192 px inner width
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda _, v=val: self._set(v))
             layout.addWidget(btn)
@@ -284,18 +284,18 @@ class TempToggle(QWidget):
                 background-color: {GOLD};
                 color: {TEXT_DARK};
                 border: none;
-                border-radius: 6px;
-                font-size: 11px;
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 700;
             }}
         """
         inactive = f"""
             QPushButton {{
                 background-color: {BG};
-                color: {TEXT_DIM};
-                border: 1px solid {BORDER};
-                border-radius: 6px;
-                font-size: 11px;
+                color: {TEXT_MID};
+                border: 1px solid {GOLD_DIMMED};
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 500;
             }}
             QPushButton:hover {{
@@ -348,7 +348,7 @@ class AlertPill(QFrame):
         "success": (GREEN, "#0a2010"),
         "warning": (AMBER, "#1a1400"),
         "error": (RED, "#1a0808"),
-        "info": (TEXT_DIM, BG_ELEVATED),
+        "info": (TEXT_MID, BG_ELEVATED),
     }
 
     def __init__(self, text, severity="info", parent=None):
@@ -358,12 +358,12 @@ class AlertPill(QFrame):
             QFrame {{
                 background-color: {bg};
                 border: 1px solid {fg};
-                border-radius: 12px;
-                padding: 4px 14px;
+                border-radius: 15px;
+                padding: 6px 18px;
             }}
         """)
         lbl = QLabel(text, self)
-        lbl.setStyleSheet(f"color: {fg}; font-size: 11px; font-weight: 600; background: transparent; border: none;")
+        lbl.setStyleSheet(f"color: {fg}; font-size: 13px; font-weight: 600; background: transparent; border: none;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(lbl, alignment=Qt.AlignCenter)
@@ -689,7 +689,7 @@ class ProductCard(QFrame):
         self._product = product
         prefs = saved_prefs or {}
         self.setFixedWidth(240)
-        self.setMinimumHeight(420)
+        self.setMinimumHeight(484)   # content (title/strength/volume/temp/BREW) needs ~470; less squeezes spacing
         self.setStyleSheet(f"""
             ProductCard {{
                 background-color: {BG_CARD};
@@ -747,7 +747,7 @@ class ProductCard(QFrame):
         self._strength = StrengthSelector(init_strength, max(product.strength_max, 1))
         if product.strength_max > 0:
             str_label = QLabel("STRENGTH")
-            str_label.setFont(make_font(9, QFont.DemiBold, spacing=2))
+            str_label.setFont(make_font(10, QFont.DemiBold, spacing=2))
             str_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
             layout.addWidget(str_label)
             layout.addSpacing(6)
@@ -756,7 +756,7 @@ class ProductCard(QFrame):
 
         # Volume
         vol_label = QLabel("VOLUME")
-        vol_label.setFont(make_font(9, QFont.DemiBold, spacing=2))
+        vol_label.setFont(make_font(10, QFont.DemiBold, spacing=2))
         vol_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         layout.addWidget(vol_label)
         layout.addSpacing(6)
@@ -772,28 +772,28 @@ class ProductCard(QFrame):
         self._slider.setStyleSheet(f"""
             QSlider::groove:horizontal {{
                 background: {BORDER};
-                height: 5px;
-                border-radius: 2px;
+                height: 8px;
+                border-radius: 4px;
             }}
             QSlider::handle:horizontal {{
                 background: {GOLD};
-                width: 16px;
-                height: 16px;
-                margin: -6px 0;
-                border-radius: 8px;
+                width: 24px;
+                height: 24px;
+                margin: -8px 0;
+                border-radius: 12px;
             }}
             QSlider::handle:horizontal:hover {{
                 background: {GOLD_LIGHT};
             }}
             QSlider::sub-page:horizontal {{
                 background: {GOLD_DARK};
-                border-radius: 2px;
+                border-radius: 4px;
             }}
         """)
         vol_row.addWidget(self._slider, stretch=1)
         init_vol = prefs.get("volume", product.volume_default)
         self._vol_label = QLabel(f"{self._snap_volume(init_vol)} ml")
-        self._vol_label.setFixedWidth(52)
+        self._vol_label.setFixedWidth(70)
         self._vol_label.setFont(make_font(12, QFont.DemiBold))
         self._vol_label.setStyleSheet(f"color: {GOLD_LIGHT}; background: transparent; border: none;")
         self._vol_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -805,7 +805,7 @@ class ProductCard(QFrame):
 
         # Temperature
         temp_label = QLabel("TEMPERATURE")
-        temp_label.setFont(make_font(9, QFont.DemiBold, spacing=2))
+        temp_label.setFont(make_font(10, QFont.DemiBold, spacing=2))
         temp_label.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         layout.addWidget(temp_label)
         layout.addSpacing(6)
@@ -817,7 +817,7 @@ class ProductCard(QFrame):
 
         # Brew button
         self._brew_btn = QPushButton("BREW")
-        self._brew_btn.setFixedHeight(46)
+        self._brew_btn.setFixedHeight(54)
         self._brew_btn.setCursor(Qt.PointingHandCursor)
         self._brew_btn.setFont(make_font(12, QFont.Bold, spacing=3))
         self._brew_btn.setStyleSheet(f"""
@@ -921,8 +921,8 @@ class BrewConfirmDialog(QDialog):
         details = QLabel(
             f"{strength_text}{volume_ml} ml    |    {temp_name}"
         )
-        details.setFont(make_font(12))
-        details.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
+        details.setFont(make_font(13))
+        details.setStyleSheet(f"color: {TEXT_MID}; background: transparent; border: none;")
         details.setAlignment(Qt.AlignCenter)
         lay.addWidget(details)
         lay.addSpacing(30)
@@ -930,19 +930,19 @@ class BrewConfirmDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(14)
         cancel = QPushButton("Cancel")
-        cancel.setFixedHeight(42)
+        cancel.setFixedHeight(50)
         cancel.setCursor(Qt.PointingHandCursor)
         cancel.setFont(make_font(12, QFont.DemiBold, spacing=1))
         cancel.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {TEXT_DIM};
-                border: 1px solid {BORDER};
+                color: {TEXT_MID};
+                border: 1px solid {GOLD_DIMMED};
                 border-radius: 10px;
                 padding: 0 28px;
             }}
             QPushButton:hover {{
-                border-color: {TEXT_DIM};
+                border-color: {GOLD};
                 color: {TEXT};
             }}
         """)
@@ -950,7 +950,7 @@ class BrewConfirmDialog(QDialog):
         btn_row.addWidget(cancel)
 
         confirm = QPushButton("BREW")
-        confirm.setFixedHeight(42)
+        confirm.setFixedHeight(50)
         confirm.setCursor(Qt.PointingHandCursor)
         confirm.setFont(make_font(12, QFont.Bold, spacing=3))
         confirm.setStyleSheet(f"""
@@ -1037,7 +1037,7 @@ class SetupScreen(QWidget):
         inp_lay.setSpacing(12)
 
         self._hash_input = QLineEdit()
-        self._hash_input.setPlaceholderText("64-character hex hash (e.g. CCC3B0FDD2EE...)")
+        self._hash_input.setPlaceholderText("64-character hex hash (e.g. 0123456789AB...)")
         self._hash_input.setFixedHeight(44)
         self._hash_input.setFont(make_font(11))
         self._hash_input.setStyleSheet(f"""
@@ -1053,7 +1053,7 @@ class SetupScreen(QWidget):
         """)
         inp_lay.addWidget(self._hash_input)
 
-        save_btn = QPushButton("SAVE & CONNECT")
+        save_btn = QPushButton("SAVE && CONNECT")   # && = literal ampersand (a single & is a mnemonic marker)
         save_btn.setFixedHeight(46)
         save_btn.setCursor(Qt.PointingHandCursor)
         save_btn.setFont(make_font(12, QFont.Bold, spacing=2))
@@ -1199,7 +1199,7 @@ class ConnectionScreen(QWidget):
         self._retry_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {TEXT_DIM};
+                color: {TEXT_MID};
                 border: 1px solid {BORDER};
                 border-radius: 10px;
             }}
@@ -1424,7 +1424,7 @@ class StatisticsScreen(QWidget):
         h_lay.setContentsMargins(24, 0, 32, 0)
 
         back_btn = QPushButton("\u2190")
-        back_btn.setFixedSize(40, 36)
+        back_btn.setFixedSize(46, 40)
         back_btn.setCursor(Qt.PointingHandCursor)
         back_btn.setFont(make_font(18))
         back_btn.setStyleSheet(f"""
@@ -1456,16 +1456,16 @@ class StatisticsScreen(QWidget):
         h_lay.addStretch()
 
         self._refresh_btn = QPushButton("REFRESH")
-        self._refresh_btn.setFixedHeight(32)
+        self._refresh_btn.setFixedHeight(40)
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
-        self._refresh_btn.setFont(make_font(10, QFont.DemiBold, spacing=1))
+        self._refresh_btn.setFont(make_font(11, QFont.DemiBold, spacing=1))
         self._refresh_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {GOLD_DIMMED};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-                padding: 0 16px;
+                color: {GOLD};
+                border: 1px solid {GOLD_DIMMED};
+                border-radius: 10px;
+                padding: 0 20px;
             }}
             QPushButton:hover {{
                 border-color: {GOLD};
@@ -1665,20 +1665,21 @@ class DashboardScreen(QWidget):
         h_lay.addSpacing(16)
 
         stats_btn = QPushButton("Statistics")
-        stats_btn.setFixedHeight(32)
+        stats_btn.setFixedHeight(40)
         stats_btn.setCursor(Qt.PointingHandCursor)
-        stats_btn.setFont(make_font(10, QFont.DemiBold))
+        stats_btn.setFont(make_font(11, QFont.DemiBold))
         stats_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {GOLD_DIMMED};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-                padding: 0 16px;
+                color: {GOLD};
+                border: 1px solid {GOLD_DIMMED};
+                border-radius: 10px;
+                padding: 0 20px;
             }}
             QPushButton:hover {{
                 border-color: {GOLD};
-                color: {GOLD};
+                background-color: {BG_CARD};
+                color: {GOLD_LIGHT};
             }}
         """)
         stats_btn.clicked.connect(self.stats_requested.emit)
@@ -1686,16 +1687,16 @@ class DashboardScreen(QWidget):
         h_lay.addSpacing(8)
 
         disc_btn = QPushButton("Disconnect")
-        disc_btn.setFixedHeight(32)
+        disc_btn.setFixedHeight(40)
         disc_btn.setCursor(Qt.PointingHandCursor)
-        disc_btn.setFont(make_font(10, QFont.DemiBold))
+        disc_btn.setFont(make_font(11, QFont.DemiBold))
         disc_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {TEXT_DIM};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-                padding: 0 16px;
+                color: {TEXT_MID};
+                border: 1px solid {TEXT_DIM};
+                border-radius: 10px;
+                padding: 0 20px;
             }}
             QPushButton:hover {{
                 border-color: {RED};
@@ -1716,7 +1717,7 @@ class DashboardScreen(QWidget):
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent; border: none;")
         scroll_lay = QVBoxLayout(scroll_content)
-        scroll_lay.setContentsMargins(0, 40, 0, 40)
+        scroll_lay.setContentsMargins(0, 20, 0, 20)
 
         self._cards_layout = QHBoxLayout()
         self._cards_layout.setSpacing(28)
