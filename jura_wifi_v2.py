@@ -45,7 +45,10 @@ DEVICE_NAME = "JURA-Desktop"
 
 BREW_COOLDOWN_SECONDS = 10
 STATUS_POLL_INTERVAL = 4
-HEARTBEAT_INTERVAL = 9
+# Consecutive silent polls (no reply within the 2 s recv window) before the link
+# is declared dead: ~3 x (2 s + 4 s) = ~18 s. A closed/reset socket doesn't
+# wait for this -- it is treated as dead on the first failed poll.
+STATUS_MAX_FAILURES = 3
 
 # E4 product code → @TP parameter template (16 bytes as hex)
 # Byte layout: [product, 0, strength, volume_units, 0, 0, temp, 0, 01, 0...0, grinder_flag]
@@ -416,7 +419,10 @@ class WiFiV2Manager(QObject):
         with self._sock_lock:
             if self._send(cmd):
                 return self._recv_all(timeout=timeout, expect=expect)
-        return []
+        # _send() only fails on a missing/broken socket -- surface that as a
+        # dead link instead of an empty reply, so callers can tell "dongle
+        # didn't answer" from "connection is gone".
+        raise ConnectionError("send failed: no connection to dongle")
 
     def send_command(self, cmd: str) -> Optional[str]:
         """Send a raw @ command. Returns first response or None."""
@@ -500,6 +506,7 @@ class WiFiV2Manager(QObject):
             # TCP connect
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(TCP_TIMEOUT)
+            self._tune_socket(sock)
             sock.connect((ip, DONGLE_PORT))
             self._sock = sock
             self._recv_buf = b""
@@ -565,6 +572,20 @@ class WiFiV2Manager(QObject):
             logger.exception("V2 connect failed")
             self._close_socket()
             self.connect_fail.emit(str(e))
+
+    @staticmethod
+    def _tune_socket(sock: socket.socket):
+        """Small-command protocol: no Nagle delay; TCP keepalive so the kernel
+        notices a dongle that vanished (power cut, WiFi drop) within ~25 s
+        even while nothing is being sent (e.g. during a long brew listen)."""
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            for name, val in (("TCP_KEEPIDLE", 10), ("TCP_KEEPINTVL", 5), ("TCP_KEEPCNT", 3)):
+                if hasattr(socket, name):  # Linux; absent on some platforms
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), val)
+        except OSError as e:
+            logger.debug("V2 socket tuning skipped: %s", e)
 
     def _close_socket(self):
         try:
@@ -647,12 +668,21 @@ class WiFiV2Manager(QObject):
                 else:
                     fail_count += 1
 
-                if fail_count >= 5:
+                if fail_count >= STATUS_MAX_FAILURES:
                     logger.warning("V2 status: %d failures, disconnecting", fail_count)
                     self._do_disconnect()
                     return
 
+            except socket.timeout:
+                fail_count += 1
+            except OSError as e:
+                # Closed by the dongle, reset, or send failed: the link is
+                # gone -- don't spend more polls confirming it.
+                logger.warning("V2 status: connection lost (%s), disconnecting", e)
+                self._do_disconnect()
+                return
             except Exception:
+                logger.exception("V2 status poll failed")
                 fail_count += 1
 
             self._stop_event.wait(STATUS_POLL_INTERVAL)
