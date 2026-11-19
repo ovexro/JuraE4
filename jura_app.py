@@ -2165,13 +2165,18 @@ def set_autostart(on):
             pass
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    # sys.executable + this file's own path works for every install method
+    # (the venv install's run.sh, or a system Python with no venv at all for
+    # a .deb/system install) -- unlike hard-coding run.sh, which a .deb
+    # install does not have.
+    exec_line = " ".join(f'"{p}"' for p in (sys.executable, os.path.abspath(__file__))) + " --minimized"
     with open(path, "w") as f:
         f.write(
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=JURA Desktop Control\n"
             "Comment=Control the JURA E4 coffee machine\n"
-            f"Exec=\"{os.path.join(APP_DIR, 'run.sh')}\" --minimized\n"
+            f"Exec={exec_line}\n"
             f"Icon={os.path.join(APP_DIR, 'icon_256.png')}\n"
             "Terminal=false\n"
             "X-GNOME-Autostart-enabled=true\n"
