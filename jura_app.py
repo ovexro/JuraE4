@@ -9,14 +9,13 @@ import os
 from logging.handlers import RotatingFileHandler
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QPushButton, QSlider, QFrame, QStackedWidget,
-    QGraphicsDropShadowEffect, QDialog, QSpacerItem, QSizePolicy,
-    QScrollArea, QLineEdit, QSystemTrayIcon, QMenu, QAction,
+    QLabel, QPushButton, QSlider, QFrame, QStackedWidget,
+    QGraphicsDropShadowEffect, QDialog, QScrollArea, QLineEdit, QSystemTrayIcon, QMenu, QAction,
 )
-from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
 from PyQt5.QtGui import (
     QFont, QColor, QPainter, QPen, QPainterPath, QLinearGradient,
-    QRadialGradient, QFontDatabase, QPalette, QIcon,
+    QRadialGradient, QPalette, QIcon,
 )
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1830,6 +1829,12 @@ class DashboardScreen(QWidget):
         self._conn_label.setStyleSheet(f"color: {AMBER}; background: transparent; border: none;")
 
     def update_alerts(self, alerts):
+        # A poll every ~4 s usually repeats the same alerts: skip the teardown/
+        # rebuild of the pill widgets unless something actually changed.
+        key = tuple((bit, name, severity) for bit, name, severity in alerts)
+        if key == getattr(self, "_alerts_key", None):
+            return
+        self._alerts_key = key
         # Clear old pills (keep the STATUS label and spacer)
         while self._alert_layout.count() > 3:
             item = self._alert_layout.takeAt(2)
