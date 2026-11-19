@@ -12,7 +12,8 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QSlider, QFrame, QStackedWidget,
     QGraphicsDropShadowEffect, QDialog, QScrollArea, QLineEdit, QSystemTrayIcon, QMenu, QAction,
 )
-from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QLockFile
+from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtGui import (
     QFont, QColor, QPainter, QPen, QPainterPath, QLinearGradient,
     QRadialGradient, QPalette, QIcon,
@@ -1958,6 +1959,100 @@ class Settings:
 # Main Window
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Single instance + start at login
+# ---------------------------------------------------------------------------
+
+class SingleInstance:
+    """Only one app may talk to the dongle (it serves ONE TCP connection), so a
+    second launch must not start a second window that then fights the first for
+    it. The first instance holds a QLockFile (stale locks left by a crashed
+    process are detected by PID) and listens on a local socket; a later launch
+    sends "show" over that socket -- raising the running window, even when it is
+    hidden in the tray -- and exits."""
+
+    def __init__(self, lock_path=None, name="jura-desktop-single-instance"):
+        self._name = name
+        self._lock_path = lock_path or os.path.join(SETTINGS_DIR, "app.lock")
+        self._lock = QLockFile(self._lock_path)
+        self._server = None
+        self._on_show = None
+
+    def acquire(self):
+        """True if this process is now THE instance."""
+        os.makedirs(os.path.dirname(self._lock_path), exist_ok=True)
+        if not self._lock.tryLock(200):
+            return False
+        QLocalServer.removeServer(self._name)   # stale socket from a crash
+        self._server = QLocalServer()
+        self._server.newConnection.connect(self._on_connection)
+        self._server.listen(self._name)
+        return True
+
+    def notify_running(self, timeout_ms=1500):
+        """Ask the running instance to show its window. True if it answered."""
+        sock = QLocalSocket()
+        sock.connectToServer(self._name)
+        if not sock.waitForConnected(timeout_ms):
+            return False
+        sock.write(b"show")
+        sock.flush()
+        sock.waitForBytesWritten(timeout_ms)
+        sock.disconnectFromServer()
+        return True
+
+    def on_show(self, callback):
+        self._on_show = callback
+
+    def _on_connection(self):
+        conn = self._server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.waitForReadyRead(300)
+        conn.readAll()
+        conn.disconnectFromServer()
+        if self._on_show:
+            self._on_show()
+
+    def release(self):
+        if self._server:
+            self._server.close()
+        self._lock.unlock()
+
+
+def autostart_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "autostart", "jura-desktop.desktop")
+
+
+def autostart_enabled():
+    return os.path.exists(autostart_path())
+
+
+def set_autostart(on):
+    """Create/remove the freedesktop autostart entry. Launches run.sh with
+    --minimized so the app comes up in the tray without a window."""
+    path = autostart_path()
+    if not on:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=JURA Desktop Control\n"
+            "Comment=Control the JURA E4 coffee machine\n"
+            f"Exec=\"{os.path.join(APP_DIR, 'run.sh')}\" --minimized\n"
+            f"Icon={os.path.join(APP_DIR, 'icon_256.png')}\n"
+            "Terminal=false\n"
+            "X-GNOME-Autostart-enabled=true\n"
+        )
+
+
 # Alerts worth a desktop notification the moment they first appear, with the
 # action the user has to take. (Informational ones -- "Coffee ready", "Energy
 # save", "Keys locked" -- are deliberately absent.)
@@ -2152,6 +2247,11 @@ class JuraApp(QMainWindow):
         self._tray_notify.setChecked(self._notifications_enabled())
         self._tray_notify.toggled.connect(self._on_notify_toggled)
         menu.addAction(self._tray_notify)
+        self._tray_autostart = QAction("Start at login", self)
+        self._tray_autostart.setCheckable(True)
+        self._tray_autostart.setChecked(autostart_enabled())
+        self._tray_autostart.toggled.connect(set_autostart)
+        menu.addAction(self._tray_autostart)
         self._tray_status = QAction("Not connected", self)
         self._tray_status.setEnabled(False)
         menu.addAction(self._tray_status)
@@ -2588,8 +2688,22 @@ def main():
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
+    guard = SingleInstance()
+    if not guard.acquire():
+        # Already running: raise that window instead of opening a second one
+        # that would fight it for the dongle's single connection.
+        shown = guard.notify_running()
+        print("JURA Desktop Control is already running"
+              + (" -- brought it to the front." if shown else "."))
+        sys.exit(0)
+
     window = JuraApp()
-    window.show()
+    guard.on_show(window._tray_show)
+    app.aboutToQuit.connect(guard.release)
+    # --minimized (used by "Start at login"): come up in the tray, no window --
+    # but only when a tray exists, otherwise the app would be unreachable.
+    if not ("--minimized" in sys.argv[1:] and window._tray):
+        window.show()
     sys.exit(app.exec_())
 
 
