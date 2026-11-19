@@ -27,6 +27,8 @@ python3 tests/edge_test.py    # or one file; each line is PASS/FAIL
 | `preflight_test.py` | pre-brew alert check, product-aware |
 | `reconnect_test.py` | never-give-up reconnect, Disconnect mid-reconnect |
 | `notify_test.py` | alert transitions, brew ready/failed, lost/back online, toggle |
+| `discovery_test.py` | UDP discovery: reply parsing, broadcast targets, several dongles, no answer, scan-fallback text |
+| `setup_test.py` | first-launch guide: key validation, Copy buttons, help links |
 | `single_instance_test.py` | lock + "show" socket (also two real processes, stale lock), autostart entry |
 
 Tests never talk to a real dongle and never contain the auth hash (the module's

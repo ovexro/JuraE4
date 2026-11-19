@@ -76,6 +76,12 @@ Single source of truth for what's implemented and what's not. Check items as the
 - [x] SingleInstance: QLockFile (stale-lock safe) + local socket; a repeat launch raises the running window and exits
 - [x] "Start at login" tray toggle -> ~/.config/autostart entry running `run.sh --minimized`; `--minimized` only honoured when a tray exists
 
+## Install & First Run (2026-11-19) — COMPLETE
+- [x] `install.sh` one-command installer (curl | bash): apt/dnf/pacman prerequisites only if missing, clone to ~/.local/share/jura-desktop, venv + pinned requirements, menu entry + `jura-desktop` command; idempotent update; `uninstall.sh` (settings kept unless --purge). Verified from GitHub into a fresh HOME
+- [x] Dongle discovery by UDP broadcast (+ known IP): several dongles listed; empty scan keeps the real connect error and pre-fills the saved IP; MAC offset fixed (verified on the real dongle)
+- [x] First-launch setup guide (4 numbered steps, PCAPdroid on the phone, copy buttons for the extractor commands, help links)
+- [x] settings.json written 0600 in a 0700 folder (it holds the dongle key)
+
 ## Tools — COMPLETE
 - [x] tools/extract_hash.py — PCAP auth hash extraction
 - [x] captures/wifi_crypto.py — standalone encryption test

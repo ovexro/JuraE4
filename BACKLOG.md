@@ -4,7 +4,9 @@ Forward-looking list: candidate next tasks, speculative enhancements, and known 
 
 ## Candidate next tasks
 
-Ideas proposed after the 2026-11-19 audit (notifications and single-instance/autostart have shipped):
+Ideas proposed after the 2026-11-19 audit (notifications, single-instance/autostart, installer and setup guide have shipped):
+- **`.deb` package** (GitHub Releases) for Mint/Ubuntu/Debian: `sudo apt install ./jura-desktop.deb` pulls the dependencies; AppImage/Flatpak are bigger jobs.
+- **Verify PCAPdroid with a real J.O.E. capture** — the setup guide recommends it (it records the phone's own traffic, no root) but the author's keys came from a router capture.
 - **Usage history**: snapshot the lifetime counters on each connect -> cups per day/week and "descaling due in ~N cups".
 - **Notification extras**: optional sound, "what to do" hint per blocking alert, click-to-open from the balloon (QSystemTrayIcon.messageClicked -> `_tray_show`).
 - **Romanian UI** option; **Home Assistant / REST** bridge (same idea as the Trellis API).

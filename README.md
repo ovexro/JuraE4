@@ -68,7 +68,12 @@ A premium Linux desktop app for controlling the **JURA E4** coffee machine throu
 
 **Statistics & maintenance** — lifetime counters and service wear (0 % = just serviced, 100 % = due; sample values shown).
 
-The first launch shows a setup screen for the authentication hash, and a connection screen with manual IP entry if the dongle is not found automatically.
+<p align="center">
+  <img src="docs/screenshots/setup.png" width="640" alt="First-launch setup guide: four numbered steps - record J.O.E. connecting with PCAPdroid, copy the recording, read the key, paste it and connect">
+</p>
+
+**First-launch guide** — four steps with copy buttons; a connection screen with manual IP entry appears if the dongle can't be found automatically.
+
 The pictures are rendered from the app's own widgets with sample data (no machine needed): `python3 tools/make_screenshots.py` regenerates them into `docs/screenshots/`.
 
 ## Requirements
@@ -82,37 +87,48 @@ The pictures are rendered from the app's own widgets with sample data (no machin
 
 ## Installation
 
+### One command (Linux Mint, Ubuntu, Debian — best-effort on Fedora and Arch)
+
 ```bash
-# Clone
+curl -fsSL https://raw.githubusercontent.com/ovexro/JuraE4/main/install.sh | bash
+```
+
+This installs anything missing (`git`, `python3`, `venv`, `pip` — asks for your `sudo` password only if something has to be installed), downloads the app to `~/.local/share/jura-desktop`, sets up its own Python environment with PyQt5, and adds **JURA Desktop Control** to your application menu plus a `jura-desktop` command. Open the app: the first launch walks you through pairing (see below).
+
+Prefer to read the script before running it? `curl -fsSL https://raw.githubusercontent.com/ovexro/JuraE4/main/install.sh -o install.sh`, look at it, then `bash install.sh`. Running it again updates in place and never touches your settings.
+
+To remove everything: `~/.local/share/jura-desktop/uninstall.sh` (keeps your settings and saved key; add `--purge` to delete those too).
+
+> Tested on Linux Mint 22 (Cinnamon). On plain GNOME the tray icon needs the *AppIndicator* extension; without a tray the app still works, but it can't hide in the tray and desktop notifications are unavailable.
+
+### Manual
+
+```bash
 git clone https://github.com/ovexro/JuraE4.git
 cd JuraE4
-
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run
 ./run.sh
 ```
 
 ## First-time setup (auth hash)
 
-The WiFi Connect V2 dongle requires a per-dongle authentication hash. This is a one-time setup — you extract the hash once and the app remembers it forever.
+The WiFi Connect V2 dongle only talks to a device that knows the key the **J.O.E. phone app received when it was paired**. This is a one-time setup — you read that key once and the app remembers it. **The app's first-launch screen walks you through exactly these steps** (with copy buttons for the commands); this section is the reference.
 
-### Step 1: Capture network traffic
+### Step 1: Record J.O.E. connecting
 
-You need a packet capture of the J.O.E. app connecting to your machine. Pick whichever method works for your setup:
+You need a capture of the J.O.E. app connecting to your machine. A normal home network is *switched*, so a PC on the same WiFi **cannot see** the traffic between your phone and the dongle — capture it on the phone itself, or on the router.
 
-**Option A — Wireshark (easiest if your PC is on the same WiFi)**
-1. Install [Wireshark](https://www.wireshark.org/)
-2. Start capturing on your WiFi interface
-3. Open J.O.E. on your phone and let it connect to the coffee machine
-4. Stop the capture, save as `capture.pcap`
+**Option A — PCAPdroid on your phone (no root)**
+1. Install [PCAPdroid](https://github.com/emanuele-f/PCAPdroid) (free; Google Play or F-Droid)
+2. In PCAPdroid pick **J.O.E.** as the app to capture and tap **Start**
+3. Open J.O.E. and wait until it shows your machine
+4. Back in PCAPdroid tap **Stop** and save the capture as a `.pcap` file, then copy it to your computer
 
-**Option B — tcpdump on an OpenWrt router**
+PCAPdroid records the phone's own traffic through a local VPN, so it needs no root and sees J.O.E.'s connection to the dongle. *(I used Option B myself; if a PCAPdroid capture contains no traffic to port 51515, use B.)*
+
+**Option B — tcpdump on an OpenWrt router (the method used to develop this app)**
 ```bash
 # SSH into your router
 ssh root@192.168.1.1
@@ -125,10 +141,10 @@ kill %1
 scp root@192.168.1.1:/tmp/capture.pcap .
 ```
 
-**Option C — tcpdump on Linux (if your network allows promiscuous mode)**
+**Option C — a machine that carries the traffic (your router, or a PC acting as the WiFi hotspot / bridge)**
 ```bash
-sudo tcpdump -i wlan0 -w capture.pcap port 51515
-# Open J.O.E. on phone, let it connect, then Ctrl+C
+sudo tcpdump -i <interface> -w capture.pcap port 51515
+# Open J.O.E. on the phone, let it connect, then Ctrl+C
 ```
 
 ### Step 2: Extract the hash
@@ -154,7 +170,9 @@ Output:
 
 ### Step 3: Paste into the app
 
-On first launch, the app shows a setup screen. Paste the 64-character hash and click **SAVE & CONNECT**. Done — you'll never be asked again.
+On first launch, the app shows the setup guide. Paste the 64-character hash and click **SAVE & CONNECT**. Done — you'll never be asked again. The key is stored in `~/.config/jura-desktop/settings.json`, readable by you alone.
+
+After that the app finds the dongle on your network by itself (UDP discovery, including broadcast); if it can't, the connection screen lets you type the IP address.
 
 ## Usage
 

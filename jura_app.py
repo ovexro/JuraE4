@@ -12,11 +12,11 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QSlider, QFrame, QStackedWidget,
     QGraphicsDropShadowEffect, QDialog, QScrollArea, QLineEdit, QSystemTrayIcon, QMenu, QAction,
 )
-from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QLockFile
+from PyQt5.QtCore import Qt, QTimer, QPointF, QRectF, QUrl, pyqtSignal, QLockFile
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtGui import (
     QFont, QColor, QPainter, QPen, QPainterPath, QLinearGradient,
-    QRadialGradient, QPalette, QIcon,
+    QRadialGradient, QPalette, QIcon, QDesktopServices,
 )
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -975,87 +975,121 @@ class BrewConfirmDialog(QDialog):
 # First-Launch Setup Screen
 # ---------------------------------------------------------------------------
 
+PCAPDROID_URL = "https://github.com/emanuele-f/PCAPdroid"
+GUIDE_URL = "https://github.com/ovexro/JuraE4#first-time-setup-auth-hash"
+
+
 class SetupScreen(QWidget):
-    """One-time setup: user pastes their auth hash (extracted from PCAP)."""
+    """First launch: a short guide to pairing, then the key field.
+
+    The dongle only accepts the one-time key the J.O.E. phone app created when
+    it was paired with it. The user records J.O.E. connecting, reads the key
+    from the recording with tools/extract_hash.py, and pastes it here."""
     hash_submitted = pyqtSignal(str)  # the 64-char hex hash
 
     def __init__(self, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addStretch(2)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
 
-        center = QVBoxLayout()
-        center.setSpacing(0)
-        center.setAlignment(Qt.AlignHCenter)
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(page)
+        row.addStretch(1)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        col.setContentsMargins(0, 36, 0, 40)
+        column = QWidget()
+        column.setFixedWidth(640)
+        column.setLayout(col)
+        row.addWidget(column)
+        row.addStretch(1)
+        scroll.setWidget(page)
 
         brand = QLabel("JURA")
-        brand.setFont(make_font(36, QFont.Light, spacing=14))
+        brand.setFont(make_font(30, QFont.Light, spacing=14))
         brand.setStyleSheet(f"color: {GOLD}; border: none;")
         brand.setAlignment(Qt.AlignCenter)
-        center.addWidget(brand)
-        center.addSpacing(6)
-
-        sub = QLabel("DESKTOP CONTROL")
-        sub.setFont(make_font(11, QFont.Normal, spacing=4))
-        sub.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
-        sub.setAlignment(Qt.AlignCenter)
-        center.addWidget(sub)
-        center.addSpacing(8)
-
-        line = QFrame()
-        line.setFixedSize(60, 2)
-        line.setStyleSheet(f"background-color: {GOLD_DIMMED};")
-        center.addWidget(line, alignment=Qt.AlignCenter)
-        center.addSpacing(32)
-
-        title = QLabel("First-time setup")
-        title.setFont(make_font(16, QFont.DemiBold))
+        col.addWidget(brand)
+        title = QLabel("Pair with your coffee machine")
+        title.setFont(make_font(17, QFont.DemiBold))
         title.setStyleSheet(f"color: {TEXT}; border: none;")
         title.setAlignment(Qt.AlignCenter)
-        center.addWidget(title)
-        center.addSpacing(12)
+        col.addSpacing(10)
+        col.addWidget(title)
+        col.addSpacing(6)
+        col.addWidget(self._text(
+            "One-time setup, about 5 minutes. The WiFi Connect dongle only talks to a "
+            "device that knows the key the J.O.E. phone app received when it was paired. "
+            "You'll read that key from a short recording of J.O.E. connecting to your machine.",
+            align=Qt.AlignCenter))
+        col.addSpacing(18)
 
-        desc = QLabel(
-            "Paste your WiFi Connect V2 authentication hash below.\n"
-            "To get it, capture network traffic while J.O.E. connects,\n"
-            "then run:  python3 tools/extract_hash.py capture.pcap"
-        )
-        desc.setFont(make_font(11))
-        desc.setStyleSheet(f"color: {TEXT_DIM}; border: none;")
-        desc.setAlignment(Qt.AlignCenter)
-        desc.setWordWrap(True)
-        desc.setFixedWidth(440)
-        center.addWidget(desc, alignment=Qt.AlignCenter)
-        center.addSpacing(24)
+        col.addWidget(self._text(
+            "<b>Before you start</b><br>"
+            "\u2022 The machine is on, with the WiFi Connect (V2) dongle plugged in<br>"
+            "\u2022 The J.O.E. app on your phone is already connected to it<br>"
+            "\u2022 This computer is on the same home network", color=TEXT))
+        col.addSpacing(16)
 
-        # Hash input
-        input_frame = QFrame()
-        input_frame.setFixedWidth(480)
-        input_frame.setStyleSheet("background: transparent; border: none;")
-        inp_lay = QVBoxLayout(input_frame)
-        inp_lay.setContentsMargins(0, 0, 0, 0)
-        inp_lay.setSpacing(12)
+        # -- Step 1: record on the phone --
+        link = self._link_button("Open the PCAPdroid page", PCAPDROID_URL)
+        col.addWidget(self._step(1, "Record J.O.E. connecting (on your phone)", [
+            self._text(
+                "Install <b>PCAPdroid</b> (free, no root needed) from Google Play or F-Droid. "
+                "Open it and choose <b>J.O.E.</b> as the app to capture, then tap <b>Start</b>.<br>"
+                "Now open J.O.E. and wait until it shows your machine. Go back to PCAPdroid, "
+                "tap <b>Stop</b> and save the capture as a <b>.pcap</b> file."),
+            link,
+            self._text("Wireshark or tcpdump on your router work too \u2014 see the full guide.", dim=True),
+        ]))
+        col.addSpacing(10)
 
+        # -- Step 2: bring the file over --
+        col.addWidget(self._step(2, "Copy the recording to this computer", [
+            self._text("Send it to yourself (email, a messaging app, cloud drive or a USB cable) "
+                       "and save it here, for example in your Downloads folder."),
+        ]))
+        col.addSpacing(10)
+
+        # -- Step 3: read the key --
+        py = os.path.join(APP_DIR, ".venv", "bin", "python3")
+        py = py if os.path.exists(py) else "python3"
+        tool = os.path.join(APP_DIR, "tools", "extract_hash.py")
+        self._cmd_install = f'"{py}" -m pip install scapy'
+        self._cmd_extract = f'"{py}" "{tool}" ~/Downloads/capture.pcap'
+        col.addWidget(self._step(3, "Read the key from the recording", [
+            self._text("In a terminal, run these two commands (the first one only once), "
+                       "using the name of your file:"),
+            self._command_box(self._cmd_install),
+            self._command_box(self._cmd_extract),
+            self._text("It prints a 64-character <b>Auth hash</b>. Copy it.", dim=True),
+        ]))
+        col.addSpacing(10)
+
+        # -- Step 4: paste --
         self._hash_input = QLineEdit()
-        self._hash_input.setPlaceholderText("64-character hex hash (e.g. 0123456789AB...)")
+        self._hash_input.setPlaceholderText("Paste the 64-character key here (e.g. 0123456789AB...)")
         self._hash_input.setFixedHeight(44)
         self._hash_input.setFont(make_font(11))
         self._hash_input.setStyleSheet(f"""
             QLineEdit {{
                 background-color: {BG_ELEVATED};
                 color: {GOLD_LIGHT};
-                border: 1px solid {BORDER};
+                border: 1px solid {GOLD_DIMMED};
                 border-radius: 10px;
                 padding: 0 14px;
                 font-family: monospace;
             }}
-            QLineEdit:focus {{ border-color: {GOLD_DIMMED}; }}
+            QLineEdit:focus {{ border-color: {GOLD}; }}
         """)
-        inp_lay.addWidget(self._hash_input)
-
+        self._hash_input.returnPressed.connect(self._on_submit)
         save_btn = QPushButton("SAVE && CONNECT")   # && = literal ampersand (a single & is a mnemonic marker)
-        save_btn.setFixedHeight(46)
+        save_btn.setFixedHeight(50)
         save_btn.setCursor(Qt.PointingHandCursor)
         save_btn.setFont(make_font(12, QFont.Bold, spacing=2))
         save_btn.setStyleSheet(f"""
@@ -1068,20 +1102,107 @@ class SetupScreen(QWidget):
             QPushButton:hover {{ background-color: {GOLD_LIGHT}; }}
         """)
         save_btn.clicked.connect(self._on_submit)
-        inp_lay.addWidget(save_btn)
-
-        center.addWidget(input_frame, alignment=Qt.AlignCenter)
-        center.addSpacing(16)
-
         self._error_label = QLabel("")
         self._error_label.setFont(make_font(11))
         self._error_label.setStyleSheet(f"color: {RED}; border: none;")
-        self._error_label.setAlignment(Qt.AlignCenter)
-        self._error_label.setFixedWidth(440)
-        center.addWidget(self._error_label, alignment=Qt.AlignCenter)
+        self._error_label.setWordWrap(True)
+        col.addWidget(self._step(4, "Paste the key and connect", [
+            self._hash_input, save_btn, self._error_label,
+        ]))
+        col.addSpacing(14)
 
-        outer.addLayout(center)
-        outer.addStretch(3)
+        col.addWidget(self._link_button("Open the full step-by-step guide", GUIDE_URL), alignment=Qt.AlignCenter)
+        col.addSpacing(6)
+        col.addWidget(self._text(
+            "The key is stored only on this computer, in your settings folder, readable by you alone.",
+            dim=True, align=Qt.AlignCenter))
+        col.addStretch(1)
+
+    # -- building blocks --
+
+    @staticmethod
+    def _text(html, color=None, dim=False, align=None):
+        lbl = QLabel(html)
+        lbl.setTextFormat(Qt.RichText)
+        lbl.setWordWrap(True)
+        lbl.setFont(make_font(11))
+        c = color or (TEXT_DIM if dim else TEXT_MID)
+        lbl.setStyleSheet(f"color: {c}; background: transparent; border: none;")
+        if align is not None:
+            lbl.setAlignment(align)
+        return lbl
+
+    @staticmethod
+    def _link_button(text, url):
+        btn = QPushButton(text)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedHeight(36)
+        btn.setFont(make_font(10, QFont.DemiBold))
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent; color: {GOLD};
+                border: 1px solid {GOLD_DIMMED}; border-radius: 9px; padding: 0 16px;
+            }}
+            QPushButton:hover {{ border-color: {GOLD}; color: {GOLD_LIGHT}; }}
+        """)
+        btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        return btn
+
+    @staticmethod
+    def _command_box(command):
+        box = QFrame()
+        box.setStyleSheet(f"background-color: {BG}; border: 1px solid {BORDER}; border-radius: 8px;")
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(12, 8, 8, 8)
+        lbl = QLabel(command)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lbl.setStyleSheet(f"color: {GOLD_LIGHT}; font-family: monospace; font-size: 12px; border: none;")
+        lay.addWidget(lbl, stretch=1)
+        copy = QPushButton("Copy")
+        copy.setCursor(Qt.PointingHandCursor)
+        copy.setFixedSize(60, 30)
+        copy.setStyleSheet(f"""
+            QPushButton {{ background-color: transparent; color: {TEXT_MID};
+                border: 1px solid {GOLD_DIMMED}; border-radius: 7px; font-size: 12px; }}
+            QPushButton:hover {{ color: {GOLD_LIGHT}; border-color: {GOLD}; }}
+        """)
+
+        def do_copy():
+            QApplication.clipboard().setText(command)
+            copy.setText("Copied")
+            QTimer.singleShot(1500, lambda: copy.setText("Copy"))
+        copy.clicked.connect(do_copy)
+        lay.addWidget(copy, alignment=Qt.AlignTop)
+        return box
+
+    @staticmethod
+    def _step(number, heading, widgets):
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame#stepcard {{ background-color: {BG_CARD}; border: 1px solid {BORDER}; border-radius: 14px; }}
+        """)
+        card.setObjectName("stepcard")
+        lay = QHBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(14)
+        badge = QLabel(str(number))
+        badge.setFixedSize(32, 32)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFont(make_font(12, QFont.Bold))
+        badge.setStyleSheet(f"background-color: {GOLD}; color: {TEXT_DARK}; border: none; border-radius: 16px;")
+        lay.addWidget(badge, alignment=Qt.AlignTop)
+        body = QVBoxLayout()
+        body.setSpacing(8)
+        h = QLabel(heading)
+        h.setFont(make_font(12, QFont.DemiBold))
+        h.setStyleSheet(f"color: {TEXT}; background: transparent; border: none;")
+        h.setWordWrap(True)
+        body.addWidget(h)
+        for w in widgets:
+            body.addWidget(w)
+        lay.addLayout(body, stretch=1)
+        return card
 
     def _on_submit(self):
         raw = self._hash_input.text().strip()
@@ -1089,13 +1210,13 @@ class SetupScreen(QWidget):
         cleaned = raw.replace(" ", "").replace(":", "").replace("-", "")
         if len(cleaned) != 64:
             self._error_label.setText(
-                f"Hash must be exactly 64 hex characters (got {len(cleaned)})"
+                f"The key must be exactly 64 hex characters (got {len(cleaned)})."
             )
             return
         try:
             bytes.fromhex(cleaned)
         except ValueError:
-            self._error_label.setText("Invalid hex characters in hash")
+            self._error_label.setText("The key contains characters that are not hexadecimal (0-9, A-F).")
             return
         self._error_label.setText("")
         self.hash_submitted.emit(cleaned.upper())

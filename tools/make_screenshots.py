@@ -66,5 +66,8 @@ st = J.StatisticsScreen()
 st.update_statistics(MachineStatistics(778, 13, 710, 52, 35, 82, -1, 1, 1, 0))
 save(st, "statistics.png", size=(W, 800))
 
+J.APP_DIR = "/home/user/.local/share/jura-desktop"      # generic path in the setup guide's commands
+save(J.SetupScreen(), "setup.png", size=(W, 1290), wait=400)
+
 dlg = J.BrewConfirmDialog("Espresso", 2, 45, 1); dlg.show(); QTest.qWait(250)
 path = os.path.join(OUT, "confirm.png"); dlg.grab().save(path); print("wrote", os.path.relpath(path, ROOT))
