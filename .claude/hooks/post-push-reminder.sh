@@ -13,7 +13,13 @@ REPO="/home/ovidiu/jura-desktop"
 LOCAL=$(git -C "$REPO" rev-parse HEAD 2>/dev/null) || exit 0
 REMOTE=$(git -C "$REPO" rev-parse origin/main 2>/dev/null) || exit 0
 
-if [ -n "$LOCAL" ] && [ "$LOCAL" = "$REMOTE" ]; then
+# Remind only ONCE per pushed HEAD: remember the last SHA we warned about, so
+# the Stop hook stays quiet on every later turn while HEAD is unchanged.
+STATE="${XDG_CACHE_HOME:-$HOME/.cache}/jura-post-push-last-sha"
+LAST=$(cat "$STATE" 2>/dev/null || true)
+
+if [ -n "$LOCAL" ] && [ "$LOCAL" = "$REMOTE" ] && [ "$LOCAL" != "$LAST" ]; then
+    mkdir -p "$(dirname "$STATE")" 2>/dev/null && printf '%s\n' "$LOCAL" > "$STATE" 2>/dev/null || true
     jq -n '{systemMessage: "jura-desktop: HEAD matches origin/main (a push likely just happened). Reminder: update FEATURES.md/BACKLOG.md and memory files if this turn shipped a feature/fix not yet reflected there."}'
 fi
 
