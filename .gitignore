@@ -19,3 +19,4 @@ captures/*.pcap
 
 # Built packages (produced by packaging/build-deb.sh, not source)
 dist/
+.claude/settings.local.json
